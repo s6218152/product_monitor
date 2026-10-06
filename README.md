@@ -4,10 +4,6 @@
 
 ## 功能
 
-- iPhone 17 Pro Max 關鍵字比對與排除求購、配件及其他型號貼文
-- Marketplace 只保留新竹市、新竹縣、桃園市、桃園縣、苗栗市或苗栗縣商品
-- 價格條件：512G 不超過 NT$37,000；256G 不超過 NT$32,000
-- iPhone 型號、容量、價格、顏色、電池健康度、地區與交易方式解析
 - Marketplace listing 與 Group post 統一成 `ProductListing`
 - SQLite 儲存，以 `(source, source_id)` 去重；`last_seen_at` 保存來源貼文時間
 - fixture collector 與 CLI
