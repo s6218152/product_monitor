@@ -1,0 +1,10 @@
+{
+  "listings": [
+    {"id": "mp-1", "title": "iPhone 17 Pro Max 256G 台灣公司貨 售32000 新竹市面交", "url": "https://example.test/mp-1", "created_at": "2026-10-05T08:30:00+08:00"},
+    {"id": "mp-2", "title": "iPhone17 Pro Max 512GB 全新未拆 37000", "url": "https://example.test/mp-2", "condition": "全新", "location": "新竹縣", "created_at": "2026-10-05T07:30:00+08:00"},
+    {"id": "mp-3", "title": "iPhone17ProMax 256G 二手 39000", "url": "https://example.test/mp-3", "location": "台中市"},
+    {"id": "mp-4", "title": "徵 iPhone 17 Pro Max 預算38000", "url": "https://example.test/mp-4"},
+    {"id": "mp-5", "title": "iPhone 17 Pro Max 保護殼 500", "url": "https://example.test/mp-5"},
+    {"id": "mp-6", "title": "iPhone 17 Pro 256GB 35000", "url": "https://example.test/mp-6"}
+  ]
+}

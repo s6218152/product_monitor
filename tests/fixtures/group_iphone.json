@@ -1,0 +1,8 @@
+{
+  "posts": [
+    {"id": "gp-1", "group_id": "phones", "text": "出售 iPhone 17 Pro Max 256G 黑色\n電池健康度 96%\n盒裝完整\n售 42000\n台中面交", "url": "https://example.test/gp-1", "author": "Alice"},
+    {"id": "gp-2", "group_id": "phones", "text": "iPhone17ProMax 512GB 電池98% 45000 高雄寄送", "url": "https://example.test/gp-2"},
+    {"id": "gp-3", "group_id": "phones", "text": "徵 iPhone 17 Pro Max", "url": "https://example.test/gp-3"},
+    {"id": "gp-4", "group_id": "phones", "text": "出售 iPhone 17 Pro 256GB 35000", "url": "https://example.test/gp-4"}
+  ]
+}
