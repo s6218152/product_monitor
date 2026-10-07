@@ -1,6 +1,6 @@
 # facebook-product-monitor
 
-以 JSON fixture 驗證核心流程，並提供可選的 Playwright Marketplace collector。Groups 目前仍使用 fixture。
+以 JSON fixture 驗證核心流程，並提供 Playwright Marketplace 與 Facebook Groups collector。
 
 ## 功能
 
@@ -46,6 +46,12 @@ python main.py marketplace-login
 
 ```bash
 python main.py marketplace --live
+```
+
+在 `.env` 以逗號分隔設定 `FACEBOOK_GROUP_URLS` 後抓取群組貼文：
+
+```bash
+python main.py groups --live
 ```
 
 產生可直接貼到 Telegram 的 HTML 格式（時間自動轉成台灣時間）：

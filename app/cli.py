@@ -6,6 +6,7 @@ from pathlib import Path
 from collections.abc import Sequence
 
 from app.collectors.groups.client import FixtureGroupCollector
+from app.collectors.groups.playwright_client import PlaywrightGroupCollector
 from app.collectors.marketplace.client import FixtureMarketplaceCollector
 from app.collectors.marketplace.playwright_client import PlaywrightMarketplaceCollector
 from app.config import load_settings
@@ -27,7 +28,9 @@ def build_parser() -> argparse.ArgumentParser:
     marketplace_source.add_argument("--live", action="store_true")
     marketplace.add_argument("--database", type=Path)
     groups = subparsers.add_parser("groups")
-    groups.add_argument("--fixture", type=Path, required=True)
+    groups_source = groups.add_mutually_exclusive_group(required=True)
+    groups_source.add_argument("--fixture", type=Path)
+    groups_source.add_argument("--live", action="store_true")
     groups.add_argument("--database", type=Path)
     subparsers.add_parser("marketplace-login")
     telegram = subparsers.add_parser("telegram", help="輸出 Telegram HTML 格式")
@@ -92,7 +95,17 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
                 result = MarketplaceMonitor(collector, repository).run()
             else:
-                result = GroupMonitor(FixtureGroupCollector(args.fixture), repository).run()
+                collector = (
+                    PlaywrightGroupCollector(
+                        settings.facebook_profile_dir,
+                        settings.facebook_group_urls,
+                        headless=settings.facebook_headless,
+                        max_scrolls=settings.groups_max_scrolls,
+                    )
+                    if args.live
+                    else FixtureGroupCollector(args.fixture)
+                )
+                result = GroupMonitor(collector, repository).run()
         notify(result)
         return 0
     except (OSError, RuntimeError, ValueError, KeyError) as error:
