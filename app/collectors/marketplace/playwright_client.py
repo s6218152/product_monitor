@@ -142,13 +142,18 @@ class PlaywrightMarketplaceCollector:
                     page.mouse.wheel(0, 2_000)
                     page.wait_for_timeout(1_000)
                 found: dict[str, RawMarketplaceListing] = {}
-                links = page.locator('a[href*="/marketplace/item/"]')
-                for index in range(links.count()):
-                    link = links.nth(index)
+                links = page.locator('a[href*="/marketplace/item/"]').evaluate_all(
+                    """elements => elements.map(link => ({
+                        href: link.getAttribute('href') || '',
+                        text: link.innerText || '',
+                        ariaLabel: link.getAttribute('aria-label')
+                    }))"""
+                )
+                for link in links:
                     item = listing_from_link(
-                        link.get_attribute("href") or "",
-                        link.inner_text(timeout=3_000),
-                        link.get_attribute("aria-label"),
+                        link["href"],
+                        link["text"],
+                        link["ariaLabel"],
                     )
                     if item:
                         found[item.source_id] = item
