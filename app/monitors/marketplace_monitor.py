@@ -8,6 +8,9 @@ from app.products.matcher import KeywordMatcher
 from app.products.normalizer import normalize_marketplace
 from app.products.targets import TARGET_LOCATIONS
 from app.products.target_filter import matches_capacity_price
+from app.products.target_filter import rejection_reason
+from collections import Counter
+import logging
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,17 +33,12 @@ class MarketplaceMonitor:
         )
 
     def run(self) -> MonitorResult:
-        listings = [
-            normalize_marketplace(item)
-            for item in self._collector.search("iPhone 17 Pro Max")
-            if self._matcher.matches(" ".join(filter(None, (item.title, item.description))))
-        ]
+        listings = [normalize_marketplace(item) for item in self._collector.search("iPhone 17 Pro Max")]
+        reasons = Counter(rejection_reason(f"{x.title} {x.description or ''}", x.price, x.location) or "matched" for x in listings)
+        logging.getLogger(__name__).info("Marketplace filter counts: %s", dict(reasons))
         matches = [
             listing for listing in listings
-            if listing.location in TARGET_LOCATIONS
-            and matches_capacity_price(
-                f"{listing.title} {listing.description or ''}", listing.price
-            )
+            if rejection_reason(f"{listing.title} {listing.description or ''}", listing.price, listing.location) is None
         ]
         new_count = sum(self._repository.save(listing).is_new for listing in matches)
         return MonitorResult(found=len(matches), new=new_count)

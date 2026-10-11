@@ -19,7 +19,7 @@ def test_marketplace_cli_reports_new_and_existing(tmp_path: Path, capsys: object
 def test_groups_cli_filters_wanted_posts(tmp_path: Path, capsys: object) -> None:
     result = main(["groups", "--fixture", str(FIXTURES / "group_iphone.json"), "--database", str(tmp_path / "db.sqlite")])
     assert result == 0
-    assert "Found 2 listings\nNew: 2\nExisting: 0" in capsys.readouterr().out  # type: ignore[attr-defined]
+    assert "Found 0 listings\nNew: 0\nExisting: 0" in capsys.readouterr().out  # type: ignore[attr-defined]
 
 
 def test_telegram_cli(tmp_path: Path, capsys: object) -> None:

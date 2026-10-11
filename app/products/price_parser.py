@@ -11,6 +11,7 @@ _NUMBER = re.compile(r"(?<![\d,])(\d{1,3}(?:,\d{3})+|\d{4,7})(?![\d,])")
 
 
 def parse_price(text: str) -> int | None:
+    text = re.sub(r"原價\s*[:：]?\s*[\d,]+", "", text)
     marked = _MARKED_PRICE.search(text)
     if marked:
         return int(marked.group(1).replace(",", ""))
@@ -18,7 +19,7 @@ def parse_price(text: str) -> int | None:
     for match in _NUMBER.finditer(text):
         value = int(match.group(1).replace(",", ""))
         suffix = text[match.end(): match.end() + 3].lstrip().upper()
-        if suffix.startswith(("G", "GB", "%")) or 2000 <= value <= 2099:
+        if suffix.startswith(("G", "GB", "%")) or 2000 <= value <= 2099 or value > 200_000:
             continue
         return value
     return None

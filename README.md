@@ -82,3 +82,15 @@ python main.py telegram --limit 10 --send
 - `tests/fixtures/`：不含帳號、cookie 或 session 的範例資料
 
 真實 Facebook 實作應只放在 collector layer，business logic 不依賴 DOM、Playwright 或 Facebook GraphQL 格式。
+
+## 排程與維護
+
+VM 使用 `scripts/run-monitor.sh`，Groups 或 Marketplace 失敗時仍執行另一來源及 Telegram。
+每個來源逾時 420 秒、Telegram 90 秒；所有排程共用 `/tmp/facebook-product-monitor.lock`。
+建議每 10 分鐘執行，日誌包含來源結束碼、篩選淘汰原因、群組耗時與完整流程秒數。
+
+每月執行 `scripts/maintenance.py`：刪除首次收錄超過 90 天且已通知的商品，壓縮 SQLite，
+並清除專用 profile 的 Cache、Code Cache、GPUCache（保留登入資料）。需使用同一把 flock，避免瀏覽器正在使用時清理。
+未知貼文時間仍可通知並顯示「未知」，不會以抓取時間冒充作者時間。
+已通知商品低於上次通知價格時會再次通知。多容量貼文保守排除，避免價格與容量配對錯誤。
+Groups 請求時間排序，但 Facebook 不一定採用；log 會記錄排序未確認、無權限與解析結果。

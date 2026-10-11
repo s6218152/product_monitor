@@ -37,6 +37,7 @@ def format_listings(listings: list[Row]) -> str:
         )
         blocks.append(
             "\n".join((
+                "📉 降價通知" if "notified_price" in listing.keys() and listing["notified_price"] is not None and listing["price"] < listing["notified_price"] else "🆕 商品通知",
                 f"📱 容量：<b>{_format_storage(listing['title'], listing['description'])}</b>",
                 f"💰 {price}",
                 f"📍 地區：{escape(listing['location'] or '未提供')}",

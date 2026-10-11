@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS listings (
     first_seen_at TEXT NOT NULL,
     last_seen_at TEXT,
     notified_at TEXT,
+    notified_price INTEGER,
     UNIQUE(source, source_id)
 );
 """
@@ -42,4 +43,7 @@ def initialize(connection: sqlite3.Connection) -> None:
         connection.execute("ALTER TABLE listings ADD COLUMN location TEXT")
     if columns and "notified_at" not in columns:
         connection.execute("ALTER TABLE listings ADD COLUMN notified_at TEXT")
+    if columns and "notified_price" not in columns:
+        connection.execute("ALTER TABLE listings ADD COLUMN notified_price INTEGER")
+        connection.execute("UPDATE listings SET notified_price=price WHERE notified_at IS NOT NULL")
     connection.commit()

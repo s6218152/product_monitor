@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import logging
 from pathlib import Path
 import re
+import time
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
 from app.collectors.marketplace.playwright_client import parse_posted_at
@@ -12,6 +13,18 @@ from .models import RawGroupPost
 
 LOGGER = logging.getLogger(__name__)
 _POST_URL = re.compile(r"/groups/([^/]+)/(?:posts|permalink)/(\d+)")
+
+
+def snapshot(page: object) -> list[dict]:
+    return page.locator('div[role="feed"] div[role="article"]').evaluate_all("""articles => articles.map(article => {
+        const links = [...article.querySelectorAll('a[href]')];
+        const link = links.find(a => /\\/groups\\/[^/]+\\/(posts|permalink)\\/\\d+/.test(a.href));
+        const body = article.querySelector('[data-ad-preview="message"], [data-ad-comet-preview="message"]');
+        const timed = article.querySelector('[data-utime], time[datetime]');
+        return {text: body ? body.innerText : '', href: link ? link.href : '', author: null,
+            imageUrl: null, timestamp: timed ? (timed.getAttribute('data-utime') || timed.getAttribute('datetime')) : null,
+            timeLabel: link ? (link.getAttribute('aria-label') || link.innerText) : null};
+    })""")  # type: ignore[attr-defined]
 
 
 def _canonical_url(href: str) -> str:
@@ -46,6 +59,14 @@ def post_from_article(
             pass
     if created_at is None and time_label:
         created_at = parse_posted_at(time_label, now)
+        absolute = re.search(r'(\d{4})年\s*(\d{1,2})月\s*(\d{1,2})日(?:.*?(\d{1,2}):(\d{2}))?', time_label)
+        if created_at is None and absolute:
+            from zoneinfo import ZoneInfo
+            try:
+                year, month, day, hour, minute = absolute.groups()
+                created_at = datetime(int(year), int(month), int(day), int(hour or 0), int(minute or 0), tzinfo=ZoneInfo('Asia/Taipei'))
+            except ValueError:
+                pass
     return RawGroupPost(
         source_id=match.group(2),
         group_id=match.group(1),
@@ -93,12 +114,31 @@ class PlaywrightGroupCollector:
             try:
                 page = context.pages[0] if context.pages else context.new_page()
                 for group_url in self._group_urls:
+                    started = time.monotonic()
+                    before = len(found)
                     try:
-                        page.goto(group_url, wait_until="domcontentloaded", timeout=60_000)
+                        page.goto(group_url.rstrip('/') + '/?sorting_setting=CHRONOLOGICAL', wait_until="domcontentloaded", timeout=60_000)
                         if "login" in page.url or page.locator('input[name="email"]').count():
                             raise RuntimeError("Facebook 尚未登入，請先執行：python main.py marketplace-login")
                         page.wait_for_timeout(2_000)
-                        for _ in range(self._max_scrolls):
+                        body_text = page.locator('body').inner_text(timeout=5000)
+                        if any(message in body_text for message in ('此內容目前無法查看', '內容目前無法顯示', '加入社團以查看', 'This content isn’t available')):
+                            LOGGER.warning('Group inaccessible or membership required: %s', group_url)
+                            continue
+                        if page.get_by_text('新貼文', exact=True).count() == 0:
+                            LOGGER.warning('Group chronological sorting not confirmed: %s', group_url)
+                        for _ in range(self._max_scrolls + 1):
+                            for label in ("查看更多", "顯示更多"):
+                                controls = page.get_by_text(label, exact=True)
+                                for index in range(min(controls.count(), 15)):
+                                    try:
+                                        controls.nth(index).click(timeout=300)
+                                    except Exception:
+                                        pass
+                            for article in snapshot(page):
+                                post = post_from_article(article['text'], article['href'], timestamp=article['timestamp'], time_label=article['timeLabel'])
+                                if post:
+                                    found[f'{post.group_id}:{post.source_id}'] = post
                             page.mouse.wheel(0, 2_000)
                             page.wait_for_timeout(1_000)
                         for label in ("查看更多", "顯示更多"):
@@ -117,7 +157,7 @@ class PlaywrightGroupCollector:
                                 const timed = article.querySelector('[data-utime], time[datetime]');
                                 const timeLink = links.find(a => a.getAttribute('aria-label') && a.href === (postLink && postLink.href));
                                 return {
-                                    text: article.innerText || '', href: postLink ? postLink.href : '',
+                                    text: (article.querySelector('[data-ad-preview="message"], [data-ad-comet-preview="message"]') || {}).innerText || '', href: postLink ? postLink.href : '',
                                     author: authorLink ? authorLink.innerText : null,
                                     imageUrl: (article.querySelector('img[src]') || {}).src || null,
                                     timestamp: timed ? (timed.getAttribute('data-utime') || timed.getAttribute('datetime')) : null,
@@ -137,6 +177,8 @@ class PlaywrightGroupCollector:
                         raise
                     except Exception as error:
                         LOGGER.warning("Could not read Facebook group %s: %s", group_url, error)
+                    finally:
+                        LOGGER.info("Group %s posts=%d elapsed=%.1fs missing_time=%d sort=requested_chronological", group_url, len(found)-before, time.monotonic()-started, sum(p.created_at is None for p in found.values()))
             finally:
                 context.close()
         LOGGER.info("Facebook groups yielded %d unique posts", len(found))

@@ -83,16 +83,16 @@ class ListingRepository:
             placeholders = ", ".join("?" for _ in locations)
             location_filter = f" AND location IN ({placeholders})"
             parameters.extend(locations)
-        notification_filter = " AND notified_at IS NULL" if only_unnotified else ""
+        notification_filter = " AND (notified_at IS NULL OR price < notified_price)" if only_unnotified else ""
         limit_clause = ""
         if limit is not None:
             limit_clause = "LIMIT ?"
             parameters.append(limit)
         return list(self._connection.execute(
             f"""SELECT id, title, description, price, currency, location, url,
-                last_seen_at, notified_at
+                last_seen_at, notified_at, notified_price
             FROM listings
-            WHERE last_seen_at IS NOT NULL
+            WHERE 1=1
             {location_filter}
             {notification_filter}
             ORDER BY last_seen_at DESC
@@ -102,7 +102,15 @@ class ListingRepository:
 
     def mark_notified(self, listing_id: int) -> None:
         self._connection.execute(
-            "UPDATE listings SET notified_at = ? WHERE id = ?",
+            "UPDATE listings SET notified_at = ?, notified_price = price WHERE id = ?",
             (datetime.now(timezone.utc).isoformat(), listing_id),
         )
         self._connection.commit()
+
+    def prune(self, days: int = 90) -> int:
+        from datetime import timedelta
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        cursor = self._connection.execute("DELETE FROM listings WHERE first_seen_at < ? AND notified_at IS NOT NULL", (cutoff,))
+        self._connection.commit()
+        self._connection.execute("VACUUM")
+        return cursor.rowcount
