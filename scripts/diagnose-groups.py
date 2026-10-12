@@ -28,6 +28,20 @@ def inspect(page):
             if (kind) kinds[kind] = (kinds[kind] || 0) + 1;
         }
         return {feeds: document.querySelectorAll('[role="feed"]').length,
+            messageAncestors: [...document.querySelectorAll('[data-ad-preview="message"], [data-ad-comet-preview="message"]')].slice(0, 4).map(message => {
+                const chain = [];
+                let root = message;
+                for (let depth = 0; root && depth < 20; depth++, root = root.parentElement) {
+                    const links = [...root.querySelectorAll('a[href]')];
+                    chain.push({depth, tag: root.tagName, role: root.getAttribute('role'),
+                        messageCount: root.querySelectorAll('[data-ad-preview="message"], [data-ad-comet-preview="message"]').length,
+                        nestedMessageCount: root.querySelectorAll('[data-ad-preview="message"] [data-ad-comet-preview="message"], [data-ad-comet-preview="message"] [data-ad-preview="message"]').length,
+                        postLinks: links.filter(a => /\/groups\/[^/]+\/(posts|permalink)\/\d+/.test(a.href)).length,
+                        chars: (root.innerText || '').length});
+                    if (root === document.body) break;
+                }
+                return chain;
+            }),
             articles: articles.length,
             topLevel: articles.filter(el => !el.parentElement.closest('[role="article"]')).map(lengths).slice(0, 15),
             allSamples: articles.map(lengths).slice(0, 15), linkKinds: kinds,
