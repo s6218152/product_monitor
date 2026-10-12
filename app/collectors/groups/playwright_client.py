@@ -16,12 +16,16 @@ _POST_URL = re.compile(r"/groups/([^/]+)/(?:posts|permalink)/(\d+)")
 
 
 def snapshot(page: object) -> list[dict]:
-    return page.locator('div[role="feed"] div[role="article"]').evaluate_all("""articles => articles.map(article => {
+    return page.locator('[role="article"]').evaluate_all("""articles => articles.filter(article => !article.parentElement.closest('[role="article"]')).map(article => {
         const links = [...article.querySelectorAll('a[href]')];
         const link = links.find(a => /\\/groups\\/[^/]+\\/(posts|permalink)\\/\\d+/.test(a.href));
         const body = article.querySelector('[data-ad-preview="message"], [data-ad-comet-preview="message"]');
         const timed = article.querySelector('[data-utime], time[datetime]');
-        return {text: body ? body.innerText : '', href: link ? link.href : '', author: null,
+        const clone = article.cloneNode(true);
+        clone.querySelectorAll('[role="article"], [role="textbox"], [aria-label*="留言"], [aria-label*="comment"], [role="button"]').forEach(node => node.remove());
+        const fallback = clone.innerText || clone.textContent || '';
+        const content = body && body.innerText.trim() ? body.innerText : fallback;
+        return {text: content, extraction: body && body.innerText.trim() ? 'message' : 'fallback', href: link ? link.href : '', author: null,
             imageUrl: null, timestamp: timed ? (timed.getAttribute('data-utime') || timed.getAttribute('datetime')) : null,
             timeLabel: link ? (link.getAttribute('aria-label') || link.innerText) : null};
     })""")  # type: ignore[attr-defined]
@@ -116,11 +120,15 @@ class PlaywrightGroupCollector:
                 for group_url in self._group_urls:
                     started = time.monotonic()
                     before = len(found)
+                    diagnostics = {'articles': 0, 'with_link': 0, 'with_text': 0, 'fallback': 0}
                     try:
                         page.goto(group_url.rstrip('/') + '/?sorting_setting=CHRONOLOGICAL', wait_until="domcontentloaded", timeout=60_000)
                         if "login" in page.url or page.locator('input[name="email"]').count():
                             raise RuntimeError("Facebook 尚未登入，請先執行：python main.py marketplace-login")
-                        page.wait_for_timeout(2_000)
+                        try:
+                            page.locator('[role="article"]').first.wait_for(state='attached', timeout=15_000)
+                        except Exception:
+                            LOGGER.warning('Group has no article elements after waiting: %s', group_url)
                         body_text = page.locator('body').inner_text(timeout=5000)
                         if any(message in body_text for message in ('此內容目前無法查看', '內容目前無法顯示', '加入社團以查看', 'This content isn’t available')):
                             LOGGER.warning('Group inaccessible or membership required: %s', group_url)
@@ -136,6 +144,10 @@ class PlaywrightGroupCollector:
                                     except Exception:
                                         pass
                             for article in snapshot(page):
+                                diagnostics['articles'] += 1
+                                diagnostics['with_link'] += bool(article['href'])
+                                diagnostics['with_text'] += bool(article['text'].strip())
+                                diagnostics['fallback'] += article['extraction'] == 'fallback'
                                 post = post_from_article(article['text'], article['href'], timestamp=article['timestamp'], time_label=article['timeLabel'])
                                 if post:
                                     found[f'{post.group_id}:{post.source_id}'] = post
@@ -148,23 +160,7 @@ class PlaywrightGroupCollector:
                                     controls.nth(index).click(timeout=500)
                                 except Exception:
                                     pass
-                        articles = page.locator('div[role="feed"] div[role="article"]').evaluate_all(
-                            """articles => articles.map(article => {
-                                const links = [...article.querySelectorAll('a[href]')];
-                                const postLink = links.find(a => /\\/groups\\/[^/]+\\/(posts|permalink)\\/\\d+/.test(a.href));
-                                const authorLink = links.find(a => /facebook\\.com\\/(profile\\.php|[^/?#]+)($|\\?)/.test(a.href)
-                                    && !/\\/groups\\//.test(a.href));
-                                const timed = article.querySelector('[data-utime], time[datetime]');
-                                const timeLink = links.find(a => a.getAttribute('aria-label') && a.href === (postLink && postLink.href));
-                                return {
-                                    text: (article.querySelector('[data-ad-preview="message"], [data-ad-comet-preview="message"]') || {}).innerText || '', href: postLink ? postLink.href : '',
-                                    author: authorLink ? authorLink.innerText : null,
-                                    imageUrl: (article.querySelector('img[src]') || {}).src || null,
-                                    timestamp: timed ? (timed.getAttribute('data-utime') || timed.getAttribute('datetime')) : null,
-                                    timeLabel: timeLink ? timeLink.getAttribute('aria-label') : null
-                                };
-                            })"""
-                        )
+                        articles = snapshot(page)
                         for article in articles:
                             post = post_from_article(
                                 article["text"], article["href"], author=article["author"],
@@ -178,8 +174,11 @@ class PlaywrightGroupCollector:
                     except Exception as error:
                         LOGGER.warning("Could not read Facebook group %s: %s", group_url, error)
                     finally:
+                        LOGGER.info('Group extraction diagnostics %s: %s', group_url, diagnostics)
                         LOGGER.info("Group %s posts=%d elapsed=%.1fs missing_time=%d sort=requested_chronological", group_url, len(found)-before, time.monotonic()-started, sum(p.created_at is None for p in found.values()))
             finally:
                 context.close()
         LOGGER.info("Facebook groups yielded %d unique posts", len(found))
+        if not found:
+            raise RuntimeError('Groups parsed zero posts across all groups; inspect Group extraction diagnostics and membership/access')
         return list(found.values())
