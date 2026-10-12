@@ -34,6 +34,11 @@ def inspect(page):
                 for (let depth = 0; root && depth < 20; depth++, root = root.parentElement) {
                     const links = [...root.querySelectorAll('a[href]')];
                     chain.push({depth, tag: root.tagName, role: root.getAttribute('role'),
+                        linkShapes: depth === 4 ? links.slice(0, 12).map(a => {
+                            const u = new URL(a.href, location.href);
+                            return {path: u.pathname.replace(/\d+/g, ':id'), queryKeys: [...u.searchParams.keys()],
+                                textChars: (a.innerText || '').length, hasAriaLabel: !!a.getAttribute('aria-label')};
+                        }) : undefined,
                         messageCount: root.querySelectorAll('[data-ad-preview="message"], [data-ad-comet-preview="message"]').length,
                         nestedMessageCount: root.querySelectorAll('[data-ad-preview="message"] [data-ad-comet-preview="message"], [data-ad-comet-preview="message"] [data-ad-preview="message"]').length,
                         postLinks: links.filter(a => /\/groups\/[^/]+\/(posts|permalink)\/\d+/.test(a.href)).length,
@@ -69,12 +74,20 @@ def main():
             page = context.new_page()
             for mode, target in [('plain', url), ('chronological', url.rstrip('/') + '/?sorting_setting=CHRONOLOGICAL')]:
                 page.goto(target, wait_until='domcontentloaded', timeout=60000)
-                for stage in ('initial', 'after_wait', 'after_scroll'):
+                for stage in ('initial', 'after_wait', 'after_scroll', 'after_hover'):
                     if stage == 'after_wait':
                         page.wait_for_timeout(15000)
                     elif stage == 'after_scroll':
                         page.mouse.wheel(0, 1800)
                         page.wait_for_timeout(5000)
+                    elif stage == 'after_hover':
+                        links = page.locator('[role="feed"] a[href*="/groups/"]')
+                        for index in range(min(links.count(), 12)):
+                            try:
+                                links.nth(index).hover(timeout=1000)
+                            except Exception:
+                                pass
+                        page.wait_for_timeout(1500)
                     print(json.dumps({'mode': mode, 'stage': stage, **inspect(page)}, ensure_ascii=False), flush=True)
         finally:
             context.close()
