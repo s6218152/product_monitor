@@ -62,6 +62,10 @@ def _canonical_url(href: str) -> str:
     return urlunsplit((parts.scheme, parts.netloc, parts.path.rstrip("/"), "", ""))
 
 
+def has_usable_posts(records: list[dict]) -> bool:
+    return any(record.get('text', '').strip() and _POST_URL.search(record.get('href', '')) for record in records)
+
+
 def post_from_article(
     text: str,
     href: str,
@@ -146,6 +150,7 @@ class PlaywrightGroupCollector:
                     started = time.monotonic()
                     before = len(found)
                     diagnostics = {'articles': 0, 'with_link': 0, 'with_text': 0, 'fallback': 0}
+                    mode = 'requested_chronological'
                     try:
                         page.goto(group_url.rstrip('/') + '/?sorting_setting=CHRONOLOGICAL', wait_until="domcontentloaded", timeout=60_000)
                         if "login" in page.url or page.locator('input[name="email"]').count():
@@ -160,6 +165,21 @@ class PlaywrightGroupCollector:
                             continue
                         if page.get_by_text('新貼文', exact=True).count() == 0:
                             LOGGER.warning('Group chronological sorting not confirmed: %s', group_url)
+                        # A visible message does not imply its permalink has loaded.
+                        for _ in range(5):
+                            if has_usable_posts(snapshot(page)):
+                                break
+                            page.wait_for_timeout(2_000)
+                        if not has_usable_posts(snapshot(page)):
+                            LOGGER.warning('Chronological page has no paired post content/link; retrying plain group page: %s', group_url)
+                            mode = 'plain_fallback_sort_unconfirmed'
+                            page.goto(group_url, wait_until='domcontentloaded', timeout=60_000)
+                            if 'login' in page.url or page.locator('input[name="email"]').count():
+                                raise RuntimeError('Facebook 尚未登入，請先執行：python main.py marketplace-login')
+                            for _ in range(8):
+                                if has_usable_posts(snapshot(page)):
+                                    break
+                                page.wait_for_timeout(2_000)
                         for _ in range(self._max_scrolls + 1):
                             for label in ("查看更多", "顯示更多"):
                                 controls = page.get_by_text(label, exact=True)
@@ -200,7 +220,9 @@ class PlaywrightGroupCollector:
                         LOGGER.warning("Could not read Facebook group %s: %s", group_url, error)
                     finally:
                         LOGGER.info('Group extraction diagnostics %s: %s', group_url, diagnostics)
-                        LOGGER.info("Group %s posts=%d elapsed=%.1fs missing_time=%d sort=requested_chronological", group_url, len(found)-before, time.monotonic()-started, sum(p.created_at is None for p in found.values()))
+                        if len(found) == before:
+                            LOGGER.warning('Group yielded no parsed posts; extraction/access remains unverified: %s', group_url)
+                        LOGGER.info("Group %s posts=%d elapsed=%.1fs missing_time=%d sort=%s", group_url, len(found)-before, time.monotonic()-started, sum(p.created_at is None for p in found.values()), mode)
             finally:
                 context.close()
         LOGGER.info("Facebook groups yielded %d unique posts", len(found))

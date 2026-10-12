@@ -33,3 +33,10 @@ def test_post_from_permalink_with_relative_time() -> None:
 
 def test_non_post_article_is_ignored() -> None:
     assert post_from_article("group header", "/groups/123/") is None
+
+
+def test_readiness_requires_both_post_content_and_permalink():
+    from app.collectors.groups.playwright_client import has_usable_posts
+    assert not has_usable_posts([{'text': '', 'href': '/groups/123/posts/456/'}])
+    assert not has_usable_posts([{'text': '正文', 'href': '/groups/123/'}])
+    assert has_usable_posts([{'text': '正文', 'href': '/groups/123/posts/456/'}])
