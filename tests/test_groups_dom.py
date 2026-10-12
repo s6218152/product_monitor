@@ -37,3 +37,30 @@ def test_message_marker_preferred_and_non_posts_ignored(page):
     assert records[0]['extraction'] == 'message'
     assert '512G' not in records[0]['text']
     assert post_from_article(records[1]['text'], records[1]['href']) is None
+
+
+def test_real_posts_outside_empty_article_placeholders(page):
+    page.set_content('''<div role="feed">
+      <div role="article"></div><div role="article"></div>
+      <section><header><a href="https://www.facebook.com/groups/123/posts/456/">2小時前</a></header>
+        <div><div data-ad-preview="message">iPhone 17 Pro Max 512G 竹北 售36000</div></div>
+        <div role="article">留言 256G</div>
+      </section>
+      <section><a href="https://www.facebook.com/groups/123/posts/789/">1小時前</a>
+        <div data-ad-comet-preview="message">iPhone 17 Pro Max 256G 中壢 售31000</div>
+      </section>
+    </div>''')
+    records = snapshot(page)
+    posts = [post_from_article(r['text'], r['href']) for r in records]
+    posts = [p for p in posts if p]
+    assert {p.source_id for p in posts} == {'456', '789'}
+    assert all('留言' not in p.text for p in posts)
+
+
+def test_never_pairs_body_with_neighbor_post_link(page):
+    page.set_content('''<div role="feed"><section><div data-ad-preview="message">missing link</div></section>
+      <section><a href="https://www.facebook.com/groups/123/posts/789/">time</a>
+        <div data-ad-preview="message">second post</div></section></div>''')
+    records = snapshot(page)
+    assert len(records) == 1
+    assert records[0]['text'] == 'second post'

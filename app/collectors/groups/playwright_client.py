@@ -16,10 +16,34 @@ _POST_URL = re.compile(r"/groups/([^/]+)/(?:posts|permalink)/(\d+)")
 
 
 def snapshot(page: object) -> list[dict]:
-    return page.locator('[role="article"]').evaluate_all("""articles => articles.filter(article => !article.parentElement.closest('[role="article"]')).map(article => {
+    return page.locator('[role="article"], [data-ad-preview="message"], [data-ad-comet-preview="message"]').evaluate_all("""elements => {
+        const postPattern = /\\/groups\\/[^/]+\\/(posts|permalink)\\/\\d+/;
+        const messageSelector = '[data-ad-preview="message"], [data-ad-comet-preview="message"]';
+        const candidates = [];
+        const seen = new Set();
+        for (const element of elements) {
+            if (element.matches(messageSelector)) {
+                let root = element.parentElement;
+                for (let depth = 0; root && depth < 15; depth++, root = root.parentElement) {
+                    if (root.matches('body, [role="feed"], [role="main"]')) break;
+                    const messages = [...root.querySelectorAll(messageSelector)]
+                        .filter(message => !message.closest('[role="article"]') || message.closest('[role="article"]') === root);
+                    if (messages.length > 1) break;
+                    if ([...root.querySelectorAll('a[href]')].some(a => postPattern.test(a.href))) {
+                        if (!seen.has(root)) { candidates.push({article: root, body: element}); seen.add(root); }
+                        break;
+                    }
+                }
+            }
+        }
+        for (const element of elements) {
+            if (!element.matches('[role="article"]') || element.parentElement.closest('[role="article"]')) continue;
+            if (candidates.some(candidate => element.contains(candidate.body))) continue;
+            if (!seen.has(element)) { candidates.push({article: element, body: element.querySelector(messageSelector)}); seen.add(element); }
+        }
+        return candidates.map(({article, body}) => {
         const links = [...article.querySelectorAll('a[href]')];
         const link = links.find(a => /\\/groups\\/[^/]+\\/(posts|permalink)\\/\\d+/.test(a.href));
-        const body = article.querySelector('[data-ad-preview="message"], [data-ad-comet-preview="message"]');
         const timed = article.querySelector('[data-utime], time[datetime]');
         const clone = article.cloneNode(true);
         clone.querySelectorAll('[role="article"], [role="textbox"], [aria-label*="留言"], [aria-label*="comment"], [role="button"]').forEach(node => node.remove());
@@ -28,7 +52,8 @@ def snapshot(page: object) -> list[dict]:
         return {text: content, extraction: body && body.innerText.trim() ? 'message' : 'fallback', href: link ? link.href : '', author: null,
             imageUrl: null, timestamp: timed ? (timed.getAttribute('data-utime') || timed.getAttribute('datetime')) : null,
             timeLabel: link ? (link.getAttribute('aria-label') || link.innerText) : null};
-    })""")  # type: ignore[attr-defined]
+    });
+    }""")  # type: ignore[attr-defined]
 
 
 def _canonical_url(href: str) -> str:
@@ -126,9 +151,9 @@ class PlaywrightGroupCollector:
                         if "login" in page.url or page.locator('input[name="email"]').count():
                             raise RuntimeError("Facebook 尚未登入，請先執行：python main.py marketplace-login")
                         try:
-                            page.locator('[role="article"]').first.wait_for(state='attached', timeout=15_000)
+                            page.locator('[data-ad-preview="message"], [data-ad-comet-preview="message"]').first.wait_for(state='visible', timeout=15_000)
                         except Exception:
-                            LOGGER.warning('Group has no article elements after waiting: %s', group_url)
+                            LOGGER.warning('Group has no visible message markers after waiting: %s', group_url)
                         body_text = page.locator('body').inner_text(timeout=5000)
                         if any(message in body_text for message in ('此內容目前無法查看', '內容目前無法顯示', '加入社團以查看', 'This content isn’t available')):
                             LOGGER.warning('Group inaccessible or membership required: %s', group_url)
