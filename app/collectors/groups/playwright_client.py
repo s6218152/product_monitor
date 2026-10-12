@@ -13,11 +13,12 @@ from .models import RawGroupPost
 
 LOGGER = logging.getLogger(__name__)
 _POST_URL = re.compile(r"/groups/([^/]+)/(?:posts|permalink)/(\d+)")
+_COMMERCE_URL = re.compile(r"/commerce/listing/(\d+)")
 
 
 def snapshot(page: object) -> list[dict]:
     return page.locator('[role="article"], [data-ad-preview="message"], [data-ad-comet-preview="message"]').evaluate_all("""elements => {
-        const postPattern = /\\/groups\\/[^/]+\\/(posts|permalink)\\/\\d+/;
+        const postPattern = /\\/groups\\/[^/]+\\/(posts|permalink)\\/\\d+|\\/commerce\\/listing\\/\\d+/;
         const messageSelector = '[data-ad-preview="message"], [data-ad-comet-preview="message"]';
         const candidates = [];
         const seen = new Set();
@@ -43,13 +44,15 @@ def snapshot(page: object) -> list[dict]:
         }
         return candidates.map(({article, body}) => {
         const links = [...article.querySelectorAll('a[href]')];
-        const link = links.find(a => /\\/groups\\/[^/]+\\/(posts|permalink)\\/\\d+/.test(a.href));
+        const link = links.find(a => /\\/groups\\/[^/]+\\/(posts|permalink)\\/\\d+/.test(a.href))
+            || links.find(a => /\\/commerce\\/listing\\/\\d+/.test(a.href));
+        const groupLink = links.find(a => /\\/groups\\/[^/]+(?:\\/|$)/.test(a.href));
         const timed = article.querySelector('[data-utime], time[datetime]');
         const clone = article.cloneNode(true);
         clone.querySelectorAll('[role="article"], [role="textbox"], [aria-label*="留言"], [aria-label*="comment"], [role="button"]').forEach(node => node.remove());
         const fallback = clone.innerText || clone.textContent || '';
         const content = body && body.innerText.trim() ? body.innerText : fallback;
-        return {text: content, extraction: body && body.innerText.trim() ? 'message' : 'fallback', href: link ? link.href : '', author: null,
+        return {text: content, extraction: body && body.innerText.trim() ? 'message' : 'fallback', href: link ? link.href : '', groupId: groupLink ? new URL(groupLink.href).pathname.split('/')[2] : null, author: null,
             imageUrl: null, timestamp: timed ? (timed.getAttribute('data-utime') || timed.getAttribute('datetime')) : null,
             timeLabel: link ? (link.getAttribute('aria-label') || link.innerText) : null};
     });
@@ -63,7 +66,7 @@ def _canonical_url(href: str) -> str:
 
 
 def has_usable_posts(records: list[dict]) -> bool:
-    return any(record.get('text', '').strip() and _POST_URL.search(record.get('href', '')) for record in records)
+    return any(record.get('text', '').strip() and (_POST_URL.search(record.get('href', '')) or _COMMERCE_URL.search(record.get('href', ''))) for record in records)
 
 
 def post_from_article(
@@ -75,10 +78,14 @@ def post_from_article(
     timestamp: str | None = None,
     time_label: str | None = None,
     now: datetime | None = None,
+    group_id: str | None = None,
 ) -> RawGroupPost | None:
     match = _POST_URL.search(href)
+    commerce = _COMMERCE_URL.search(href)
     content = text.strip()
-    if not match or not content:
+    if not (match or commerce) or not content:
+        return None
+    if commerce and not match and not group_id:
         return None
     created_at: datetime | None = None
     if timestamp:
@@ -101,8 +108,8 @@ def post_from_article(
             except ValueError:
                 pass
     return RawGroupPost(
-        source_id=match.group(2),
-        group_id=match.group(1),
+        source_id=match.group(2) if match else f'commerce:{commerce.group(1)}',
+        group_id=match.group(1) if match else group_id,
         text=content,
         url=_canonical_url(href),
         author=author.strip() if author and author.strip() else None,
@@ -193,7 +200,7 @@ class PlaywrightGroupCollector:
                                 diagnostics['with_link'] += bool(article['href'])
                                 diagnostics['with_text'] += bool(article['text'].strip())
                                 diagnostics['fallback'] += article['extraction'] == 'fallback'
-                                post = post_from_article(article['text'], article['href'], timestamp=article['timestamp'], time_label=article['timeLabel'])
+                                post = post_from_article(article['text'], article['href'], timestamp=article['timestamp'], time_label=article['timeLabel'], group_id=article.get('groupId') or urlsplit(group_url).path.strip('/').split('/')[1])
                                 if post:
                                     found[f'{post.group_id}:{post.source_id}'] = post
                             page.mouse.wheel(0, 2_000)
@@ -211,6 +218,7 @@ class PlaywrightGroupCollector:
                                 article["text"], article["href"], author=article["author"],
                                 image_url=article["imageUrl"], timestamp=article["timestamp"],
                                 time_label=article["timeLabel"],
+                                group_id=article.get('groupId') or urlsplit(group_url).path.strip('/').split('/')[1],
                             )
                             if post:
                                 found[f"{post.group_id}:{post.source_id}"] = post

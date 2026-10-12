@@ -64,3 +64,20 @@ def test_never_pairs_body_with_neighbor_post_link(page):
     records = snapshot(page)
     assert len(records) == 1
     assert records[0]['text'] == 'second post'
+
+
+def test_group_commerce_card_without_post_permalink(page):
+    page.set_content('''<div role="feed"><section>
+      <a href="https://www.facebook.com/groups/123/user/999/">author</a>
+      <a href="https://www.facebook.com/commerce/listing/456/?media_id=7">商品</a>
+      <div data-ad-preview="message">iPhone 17 Pro Max 512G 竹北 售36000</div>
+    </section><div role="article"></div></div>''')
+    from app.collectors.groups.playwright_client import has_usable_posts
+    records = snapshot(page)
+    assert has_usable_posts(records)
+    record = records[0]
+    post = post_from_article(record['text'], record['href'], group_id=record['groupId'])
+    assert post is not None
+    assert post.source_id == 'commerce:456'
+    assert post.group_id == '123'
+    assert post.url == 'https://www.facebook.com/commerce/listing/456'
