@@ -26,6 +26,7 @@ def rejection_reason(text: str, price: int | None, location: str | None) -> str 
         return "wanted_or_accessory"
     subject = re.sub(r"(?:附(?:贈)?|贈送|送)[^，。;\n]{0,20}?(?:保護殼|手機殼|零件)", "", text)
     subject = re.sub(r"(?:保護殼|手機殼|零件)\s*(?:附贈|贈送|隨附)", "", subject)
+    subject = re.sub(r"(?:裝|套|使用|搭配|附有|附上|附帶|含)\s*(?:保護殼|手機殼)", "", subject)
     subject = re.sub(r"(?:無|沒有|未|不曾)(?:維修|更換零件)", "", subject)
     if re.search(r"保護殼|手機殼|零件|維修服務|維修報價", subject):
         return "wanted_or_accessory"

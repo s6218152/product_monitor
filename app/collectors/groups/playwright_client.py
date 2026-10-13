@@ -50,9 +50,9 @@ def snapshot(page: object) -> list[dict]:
             if (!seen.has(element)) { candidates.push({article: element, body}); seen.add(element); }
         }
         return candidates.map(({article, body}) => {
-        const links = [...article.querySelectorAll('a[href]')].filter(link => belongsTo(link, article));
-        const link = links.find(a => /\\/groups\\/[^/]+\\/(posts|permalink)\\/\\d+/.test(a.href))
-            || links.find(a => /\\/commerce\\/listing\\/\\d+/.test(a.href));
+        const links = [...article.querySelectorAll('a[href]')].filter(link => belongsTo(link, article) && !new URL(link.href).searchParams.has('comment_id'));
+        const link = links.find(a => /\\/commerce\\/listing\\/\\d+/.test(a.href))
+            || links.find(a => /\\/groups\\/[^/]+\\/(posts|permalink)\\/\\d+/.test(a.href));
         const groupLink = links.find(a => /\\/groups\\/[^/]+(?:\\/|$)/.test(a.href));
         const timed = [...article.querySelectorAll('[data-utime], time[datetime]')].find(node => belongsTo(node, article));
         const clone = article.cloneNode(true);
