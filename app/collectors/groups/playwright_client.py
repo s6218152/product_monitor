@@ -58,7 +58,13 @@ def snapshot(page: object) -> list[dict]:
         const clone = article.cloneNode(true);
         clone.querySelectorAll('[role="article"], [role="textbox"], [aria-label*="留言"], [aria-label*="comment"], [role="button"]').forEach(node => node.remove());
         const fallback = clone.innerText || clone.textContent || '';
-        const content = body && body.innerText.trim() ? body.innerText : fallback;
+        const commerceLinks = links.filter(a => /\\/commerce\\/listing\\/\\d+/.test(a.href));
+        const commerceIds = new Set(commerceLinks.map(a => a.href.match(/\\/commerce\\/listing\\/(\\d+)/)[1]));
+        const cardText = commerceIds.size === 1
+            ? [...new Set(commerceLinks.filter(a => !new URL(a.href).searchParams.has('media_id'))
+                .map(a => (a.innerText || '').trim()).filter(Boolean))].join('\\n') : '';
+        const bodyText = body && body.innerText.trim() ? body.innerText : fallback;
+        const content = cardText && !bodyText.includes(cardText) ? cardText + '\\n' + bodyText : bodyText;
         return {text: content, extraction: body && body.innerText.trim() ? 'message' : 'fallback', href: link ? link.href : '', groupId: groupLink ? new URL(groupLink.href).pathname.split('/')[2] : null, author: null,
             imageUrl: null, timestamp: timed ? (timed.getAttribute('data-utime') || timed.getAttribute('datetime')) : null,
             timeLabel: link ? (link.getAttribute('aria-label') || link.innerText) : null};

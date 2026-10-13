@@ -111,3 +111,22 @@ def test_nested_quote_cannot_supply_parent_permalink_or_time(page):
     assert records[0]['href'].endswith('/posts/456/')
     assert records[0]['timeLabel'] == '1小時前'
     assert records[0]['timestamp'] == '2026-10-13T00:00:00Z'
+
+
+def test_commerce_title_and_author_body_both_used_for_filtering(page):
+    page.set_content('''<div role="feed"><section>
+      <a href="https://www.facebook.com/groups/625327679762262/permalink/1439020191726336/">1小時前</a>
+      <div data-ad-preview="message">【顏色】：白色 【售價】：32000 【交易地點及方式】：新竹縣竹北市</div>
+      <a href="https://www.facebook.com/commerce/listing/1786160482330710/?ref=share_attachment">NT$32,000 竹北市, 新竹縣 iPhone 17 pro max 256GB 白色</a>
+      <div role="article"><a href="https://www.facebook.com/commerce/listing/999/">512GB 10000</a></div>
+    </section></div>''')
+    from app.products.normalizer import normalize_group
+    from app.products.target_filter import rejection_reason
+    record = next(r for r in snapshot(page) if r['href'])
+    post = post_from_article(record['text'], record['href'])
+    assert post is not None
+    listing = normalize_group(post)
+    assert listing.price == 32000
+    assert listing.location == '新竹縣'
+    assert '512GB' not in listing.description
+    assert rejection_reason(listing.description, listing.price, listing.location) is None
