@@ -1,0 +1,10 @@
+[Unit]
+Description=Monthly product monitor maintenance schedule
+
+[Timer]
+OnCalendar=*-*-01 03:15:00 Asia/Taipei
+Persistent=true
+Unit=facebook-product-monitor-maintenance.service
+
+[Install]
+WantedBy=timers.target

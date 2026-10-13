@@ -125,7 +125,7 @@ class ListingRepository:
             parameters.append(limit)
         return list(self._connection.execute(
             f"""SELECT id, title, description, price, currency, location, url,
-                       last_seen_at, notified_at, notified_price, storage_gb, eligible, observed_at
+                       last_seen_at, notified_at, notified_price, storage_gb, eligible, observed_at, first_seen_at
                 FROM listings WHERE {where}
                 ORDER BY last_seen_at DESC, id DESC {limit_clause}""", parameters,
         ))

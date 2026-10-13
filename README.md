@@ -113,3 +113,46 @@ VM 使用 `scripts/run-monitor.sh`，Groups 或 Marketplace 失敗時仍執行�
 已通知商品低於上次通知價格時會再次通知。多容量貼文保守排除，避免價格與容量配對錯誤。
 多型號或多售價貼文也保守排除，避免把其他手機的價格套到目標商品。
 Groups 請求時間排序，但 Facebook 不一定採用；log 會記錄排序未確認、無權限與解析結果。
+
+## 快速增量監控（取代舊 Cron）
+
+新版常駐入口：`.venv/bin/python scripts/fast_monitor.py`。
+Marketplace 預設每 120 秒掃描一次，10 個群組分別每 300 秒輪巡；這些是目標間隔，
+實際延遲受 Facebook 載入、商品數量與 Telegram 影響，超過預定掃描時間會記錄 `scan_overdue`。
+共用一個登入 browser context、三個頁面，避免兩個 Chromium 同時使用同一個 profile。
+單一商品詳情使用 12 秒 navigation timeout，並分開排入處理佇列；先處理新商品，
+不因每輪重讀全部舊商品而拖延。詳情缺少來源資料時不冒用搜尋卡時間或描述，稍後重試。
+商品符合條件就立即入庫與傳送，失敗保留重試；即使群組失敗仍繼續其他工作。
+每 15 分鐘背景補抓並逐次擴大到最多 18 次捲動，同時刷新已見商品以檢查降價。
+
+Marketplace 請求最新排序，但只有頁面控件顯示對應排序時記錄確認；
+未確認則記錄 `marketplace_sort_unconfirmed`。群組採「最新」请求，若抓取為零，
+下次輪巡改用一般頁面，並明確標示排序未確認。連續三次群組為零、掃描失敗或嚴重落後，
+會傳送 Telegram 異常告警，同一異常最多每 30 分鐘一則。
+通知 log 包含上架到發送、首次發現到發送兩種延遲及 `within_10min`；上架時間未知時為 unknown。
+Facebook 搜尋尚未顯示的商品、待審核貼文、限流與登入失效無法保證 10 分鐘內通知。
+建議驗收 7 天並以人工抽樣檢查漏抓，不能只统计已發送商品。
+
+可在 `.env` 設定 `FAST_MARKETPLACE_INTERVAL_SECONDS=120` 和 `FAST_GROUP_INTERVAL_SECONDS=300`。
+瀏覽器每 4 小時回收重建；systemd 管理整個程序群組，停止時同時結束 Chromium 子程序。
+
+### VM 安裝方式
+
+部署前請先備份並移除舊 crontab 中帶有 `# facebook-product-monitor` 的監控、維護兩行，
+保留其他排程。新版常駐程序持有同一把鎖，舊 Cron 與手動 runner 會被鎖阻擋，不能一起使用。
+以下 unit 的帳號和路徑預設為本專案目前 VM，其他環境須調整。
+
+```bash
+sudo install -m 644 deploy/facebook-product-monitor.service /etc/systemd/system/
+sudo install -m 644 deploy/facebook-product-monitor-maintenance.service /etc/systemd/system/
+sudo install -m 644 deploy/facebook-product-monitor-maintenance.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now facebook-product-monitor.service
+sudo systemctl enable --now facebook-product-monitor-maintenance.timer
+systemctl status facebook-product-monitor.service
+journalctl -t facebook-product-monitor -f
+```
+
+每月維護 timer 會先停止常駐程序，再清理資料與快取，最後重啟监控；避免快取清理與瀏覽器使用重疊。
+回復舊方式：停止並停用新版 service/timer，再還原備份 crontab。
+本版只提供程式與部署設定，GitHub 更新不會自動切換 VM 的舊排程。

@@ -1,0 +1,22 @@
+[Unit]
+Description=Facebook product fast incremental monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=s6218152
+WorkingDirectory=/home/s6218152/facebook-product-monitor
+Environment=PYTHONUNBUFFERED=1
+Environment=FACEBOOK_HEADLESS=true
+ExecStart=/home/s6218152/facebook-product-monitor/.venv/bin/python scripts/fast_monitor.py
+Restart=on-failure
+RestartSec=30
+KillMode=control-group
+TimeoutStopSec=30
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=facebook-product-monitor
+
+[Install]
+WantedBy=multi-user.target

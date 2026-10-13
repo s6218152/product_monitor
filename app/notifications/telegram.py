@@ -122,7 +122,7 @@ def _split_message(message: str, limit: int = 4000) -> list[str]:
     return parts
 
 
-def send_html(bot_token: str, chat_id: str, message: str) -> int:
+def send_html(bot_token: str, chat_id: str, message: str, *, timeout: float = 30) -> int:
     if not bot_token or not chat_id:
         raise ValueError("TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are required")
     endpoint = f"https://api.telegram.org/bot{bot_token}/sendMessage"
@@ -136,7 +136,7 @@ def send_html(bot_token: str, chat_id: str, message: str) -> int:
         }).encode("utf-8")
         request = Request(endpoint, data=payload, headers={"Content-Type": "application/json"})
         try:
-            with urlopen(request, timeout=30) as response:
+            with urlopen(request, timeout=timeout) as response:
                 result = json.loads(response.read().decode("utf-8"))
         except HTTPError as error:
             try:

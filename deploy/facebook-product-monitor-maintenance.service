@@ -1,0 +1,11 @@
+[Unit]
+Description=Monthly product database and browser cache maintenance
+
+[Service]
+Type=oneshot
+User=s6218152
+WorkingDirectory=/home/s6218152/facebook-product-monitor
+ExecStartPre=+/usr/bin/systemctl stop facebook-product-monitor.service
+ExecStart=/home/s6218152/facebook-product-monitor/.venv/bin/python scripts/maintenance.py
+ExecStopPost=+/usr/bin/systemctl start facebook-product-monitor.service
+SyslogIdentifier=facebook-product-monitor
