@@ -81,3 +81,33 @@ def test_group_commerce_card_without_post_permalink(page):
     assert post.source_id == 'commerce:456'
     assert post.group_id == '123'
     assert post.url == 'https://www.facebook.com/commerce/listing/456'
+
+
+def test_nested_comment_message_cannot_replace_post_body(page):
+    page.set_content('''<div role="feed"><div role="article">
+      <a href="https://www.facebook.com/groups/123/posts/456/">2小時前</a>
+      <div>actual content 512G</div>
+      <div role="article"><div data-ad-preview="message">comment content 256G</div></div>
+    </div></div>''')
+    records = snapshot(page)
+    assert len(records) == 1
+    assert records[0]['href'].endswith('/posts/456/')
+    assert 'actual content 512G' in records[0]['text']
+    assert 'comment content 256G' not in records[0]['text']
+
+
+def test_nested_quote_cannot_supply_parent_permalink_or_time(page):
+    page.set_content('''<div role="feed"><div role="article">
+      <div role="article"><a href="https://www.facebook.com/groups/123/posts/999/">3天前</a>
+        <time datetime="2026-09-01T00:00:00Z"></time>
+        <div data-ad-preview="message">quoted content 256G</div></div>
+      <a href="https://www.facebook.com/groups/123/posts/456/">1小時前</a>
+      <time datetime="2026-10-13T00:00:00Z"></time>
+      <div data-ad-preview="message">actual content 512G</div>
+    </div></div>''')
+    records = snapshot(page)
+    assert len(records) == 1
+    assert records[0]['text'] == 'actual content 512G'
+    assert records[0]['href'].endswith('/posts/456/')
+    assert records[0]['timeLabel'] == '1小時前'
+    assert records[0]['timestamp'] == '2026-10-13T00:00:00Z'

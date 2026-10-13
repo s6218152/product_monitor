@@ -26,3 +26,10 @@ def test_parse_pro_max() -> None:
 
 def test_other_iphone_model_is_not_parsed_as_target() -> None:
     assert parse_iphone("iPhone 17 Pro 256GB 售35000").model is None
+
+
+def test_fullwidth_model_and_capacity_adjacent_to_chinese() -> None:
+    details = parse_iphone("ｉＰｈｏｎｅ１７ＰｒｏＭａｘ 容量２５６Ｇ全新 售３００００ 新竹面交")
+    assert details.model == "iPhone 17 Pro Max"
+    assert details.storage_gb == 256
+    assert details.price == 30000

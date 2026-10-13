@@ -1,6 +1,10 @@
 from datetime import datetime, timezone
 from pathlib import Path
 import json
+import io
+from urllib.error import HTTPError
+
+import pytest
 
 from app.database.models import ProductListing
 from app.database.repository import ListingRepository
@@ -74,3 +78,31 @@ def test_sends_html_to_telegram(monkeypatch: object) -> None:
         "parse_mode": "HTML",
         "link_preview_options": {"is_disabled": True},
     }
+
+
+def test_split_long_html_preserves_tags_and_entities():
+    assert _split_message("<b>" + "a&amp;" * 4 + "</b>", limit=4) == [
+        "<b>a&amp;a&amp;</b>", "<b>a&amp;a&amp;</b>"
+    ]
+
+
+def test_telegram_rate_limit_preserves_retry_time(monkeypatch):
+    def fail(_request, timeout):
+        raise HTTPError("https://example.test", 429, "Too many requests", {}, io.BytesIO(
+            b'{"ok":false,"description":"Too many requests","parameters":{"retry_after":60}}'
+        ))
+
+    monkeypatch.setattr(telegram, "urlopen", fail)
+    with pytest.raises(RuntimeError) as error:
+        send_html("secret", "123", "hello")
+    assert error.value.retry_after == 60
+    assert error.value.status_code == 429
+
+
+def test_non_json_telegram_error_is_actionable(monkeypatch):
+    def fail(_request, timeout):
+        raise HTTPError("https://example.test", 502, "Bad gateway", {}, io.BytesIO(b"<html>gateway</html>"))
+
+    monkeypatch.setattr(telegram, "urlopen", fail)
+    with pytest.raises(RuntimeError, match="HTTP 502"):
+        send_html("secret", "123", "hello")

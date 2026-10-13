@@ -15,3 +15,14 @@ from app.products.targets import TARGET_LOCATIONS
 def test_parse_target_locations(text: str, expected: str) -> None:
     assert parse_location(text) == expected
     assert expected in TARGET_LOCATIONS
+
+
+@pytest.mark.parametrize(("text", "expected"), [
+    ("台北101購入 新竹面交", "新竹市"),
+    ("台北購入，面交地點：竹北", "新竹縣"),
+    ("購入地點：台北\n面交地點：桃園市", "桃園市"),
+    ("新竹面交，台北購入", "新竹市"),
+    ("台北購入", None),
+])
+def test_prefers_transaction_location_over_purchase_city(text: str, expected: str | None) -> None:
+    assert parse_location(text) == expected

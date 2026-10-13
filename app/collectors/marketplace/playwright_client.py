@@ -4,6 +4,7 @@ import logging
 import json
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from html.parser import HTMLParser
 from pathlib import Path
 import re
 from urllib.parse import quote_plus, urljoin, urlsplit, urlunsplit
@@ -39,38 +40,80 @@ def parse_posted_at(text: str, now: datetime | None = None) -> datetime | None:
     return reference - delta
 
 
+class _ScriptPayloads(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.payloads: list[str] = []
+        self._chunks: list[str] | None = None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "script":
+            self._chunks = []
+
+    def handle_data(self, data: str) -> None:
+        if self._chunks is not None:
+            self._chunks.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "script" and self._chunks is not None:
+            self.payloads.append("".join(self._chunks))
+            self._chunks = None
+
+
+def _listing_data(html: str, source_id: str) -> dict:
+    parser = _ScriptPayloads()
+    parser.feed(html)
+    fields: dict = {}
+    for text in parser.payloads or [html]:
+        try:
+            payload = json.loads(text)
+        except (json.JSONDecodeError, RecursionError):
+            continue
+        pending = [payload]
+        while pending:
+            node = pending.pop()
+            if isinstance(node, dict):
+                if str(node.get("id")) == source_id:
+                    for key in ("creation_time", "location_text", "redacted_description"):
+                        if node.get(key) is not None:
+                            fields.setdefault(key, node[key])
+                pending.extend(reversed(tuple(node.values())))
+            elif isinstance(node, list):
+                pending.extend(reversed(node))
+    return fields
+
+
+def _creation_time(data: dict) -> datetime | None:
+    value = data.get("creation_time")
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return datetime.fromtimestamp(int(value), timezone.utc)
+    except (TypeError, ValueError, OverflowError, OSError):
+        return None
+
+
+def _text_field(data: dict, key: str) -> str | None:
+    field = data.get(key)
+    text = field.get("text") if isinstance(field, dict) else None
+    return text.strip() or None if isinstance(text, str) else None
+
+
+def _location(data: dict) -> str | None:
+    value = _text_field(data, "location_text")
+    return re.sub(r"\s*,\s*台灣$", "", value).strip() or None if value else None
+
+
 def parse_creation_time(html: str, source_id: str) -> datetime | None:
-    pattern = re.compile(
-        rf'"id":"{re.escape(source_id)}".{{0,4000}}?"creation_time":(\d+)',
-        re.DOTALL,
-    )
-    match = pattern.search(html)
-    return datetime.fromtimestamp(int(match.group(1)), timezone.utc) if match else None
+    return _creation_time(_listing_data(html, source_id))
 
 
 def parse_facebook_location(html: str, source_id: str) -> str | None:
-    pattern = re.compile(
-        rf'"id":"{re.escape(source_id)}".{{0,5000}}?'
-        r'"location_text":\{"text":"((?:\\.|[^"\\])*)"',
-        re.DOTALL,
-    )
-    match = pattern.search(html)
-    if not match:
-        return None
-    value = json.loads(f'"{match.group(1)}"')
-    return re.sub(r"\s*,\s*台灣$", "", value).strip() or None
+    return _location(_listing_data(html, source_id))
 
 
 def parse_facebook_description(html: str, source_id: str) -> str | None:
-    pattern = re.compile(
-        rf'"id":"{re.escape(source_id)}".{{0,20000}}?'
-        r'"redacted_description":\{"text":"((?:\\.|[^"\\])*)"',
-        re.DOTALL,
-    )
-    match = pattern.search(html)
-    if not match:
-        return None
-    return json.loads(f'"{match.group(1)}"').strip() or None
+    return _text_field(_listing_data(html, source_id), "redacted_description")
 
 
 def _matches_query(item: RawMarketplaceListing, query: str) -> bool:
@@ -138,25 +181,12 @@ class PlaywrightMarketplaceCollector:
                 if "login" in page.url or page.locator('input[name="email"]').count():
                     raise RuntimeError("Facebook 尚未登入，請先執行：python main.py marketplace-login")
                 page.wait_for_timeout(2_000)
+                found: dict[str, RawMarketplaceListing] = {}
+                self._collect_cards(page, found)
                 for _ in range(self._max_scrolls):
                     page.mouse.wheel(0, 2_000)
                     page.wait_for_timeout(1_000)
-                found: dict[str, RawMarketplaceListing] = {}
-                links = page.locator('a[href*="/marketplace/item/"]').evaluate_all(
-                    """elements => elements.map(link => ({
-                        href: link.getAttribute('href') || '',
-                        text: link.innerText || '',
-                        ariaLabel: link.getAttribute('aria-label')
-                    }))"""
-                )
-                for link in links:
-                    item = listing_from_link(
-                        link["href"],
-                        link["text"],
-                        link["ariaLabel"],
-                    )
-                    if item:
-                        found[item.source_id] = item
+                    self._collect_cards(page, found)
                 for source_id, item in tuple(found.items()):
                     if not _matches_query(item, query):
                         continue
@@ -175,16 +205,33 @@ class PlaywrightMarketplaceCollector:
                 context.close()
 
     @staticmethod
+    def _collect_cards(page: object, found: dict[str, RawMarketplaceListing]) -> None:
+        links = page.locator('a[href*="/marketplace/item/"]').evaluate_all(  # type: ignore[attr-defined]
+            """elements => elements.map(link => ({
+                href: link.getAttribute('href') || '',
+                text: link.innerText || '',
+                ariaLabel: link.getAttribute('aria-label')
+            }))"""
+        )
+        for link in links:
+            item = listing_from_link(link["href"], link["text"], link["ariaLabel"])
+            if item:
+                found[item.source_id] = item
+
+    @staticmethod
     def _read_details(
         page: object, url: str, source_id: str
     ) -> tuple[datetime | None, str | None, str | None]:
+        location = None
+        description = None
         try:
             page.goto(url, wait_until="domcontentloaded", timeout=60_000)  # type: ignore[attr-defined]
             page.wait_for_timeout(1_000)  # type: ignore[attr-defined]
             html = page.content()  # type: ignore[attr-defined]
-            embedded_time = parse_creation_time(html, source_id)
-            location = parse_facebook_location(html, source_id)
-            description = parse_facebook_description(html, source_id)
+            data = _listing_data(html, source_id)
+            embedded_time = _creation_time(data)
+            location = _location(data)
+            description = _text_field(data, "redacted_description")
             if embedded_time:
                 return embedded_time, location, description
             labels = page.locator("abbr[aria-label]")  # type: ignore[attr-defined]
@@ -197,4 +244,4 @@ class PlaywrightMarketplaceCollector:
             LOGGER.warning("No post time found on Marketplace item: %s", url)
         except Exception as error:
             LOGGER.warning("Could not read Marketplace post time from %s: %s", url, error)
-        return None, None, None
+        return None, location, description

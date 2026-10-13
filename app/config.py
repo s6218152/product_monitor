@@ -16,11 +16,20 @@ def _load_dotenv(path: Path) -> None:
         os.environ.setdefault(key.strip(), value.strip().strip("\"'"))
 
 
+def _scroll_limit(key: str) -> int:
+    try:
+        value = int(os.getenv(key, "3"))
+    except ValueError as error:
+        raise ValueError(f"{key} must be a nonnegative integer") from error
+    if value < 0:
+        raise ValueError(f"{key} must be a nonnegative integer")
+    return value
+
+
 @dataclass(frozen=True, slots=True)
 class Settings:
     database_path: Path
-    marketplace_location: str
-    marketplace_radius_km: int
+    monitor_lock_path: Path
     log_level: str
     facebook_profile_dir: Path
     facebook_headless: bool
@@ -35,18 +44,17 @@ def load_settings(env_path: Path = Path(".env")) -> Settings:
     _load_dotenv(env_path)
     return Settings(
         database_path=Path(os.getenv("DATABASE_PATH", "data/facebook_monitor.db")),
-        marketplace_location=os.getenv("MARKETPLACE_LOCATION", "Taiwan"),
-        marketplace_radius_km=int(os.getenv("MARKETPLACE_RADIUS_KM", "200")),
+        monitor_lock_path=Path(os.getenv("MONITOR_LOCK_PATH", "/tmp/facebook-product-monitor.lock")),
         log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
         facebook_profile_dir=Path(os.getenv("FACEBOOK_PROFILE_DIR", ".facebook-profile")),
         facebook_headless=os.getenv("FACEBOOK_HEADLESS", "false").casefold() in {"1", "true", "yes"},
-        marketplace_max_scrolls=int(os.getenv("MARKETPLACE_MAX_SCROLLS", "3")),
+        marketplace_max_scrolls=_scroll_limit("MARKETPLACE_MAX_SCROLLS"),
         facebook_group_urls=tuple(
             url.strip()
             for url in os.getenv("FACEBOOK_GROUP_URLS", "").split(",")
             if url.strip()
         ),
-        groups_max_scrolls=int(os.getenv("GROUPS_MAX_SCROLLS", "3")),
+        groups_max_scrolls=_scroll_limit("GROUPS_MAX_SCROLLS"),
         telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN") or None,
         telegram_chat_id=os.getenv("TELEGRAM_CHAT_ID") or None,
     )

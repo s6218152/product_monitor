@@ -14,7 +14,7 @@ def normalize_marketplace(raw: RawMarketplaceListing) -> ProductListing:
         source="marketplace", source_id=raw.source_id, title=raw.title,
         description=raw.description, price=raw.price or parse_price(" ".join(filter(None, (raw.title, raw.description)))),
         currency=raw.currency or "TWD", seller=raw.seller,
-        location=parse_location(content) or parse_location(raw.location or "") or raw.location,
+        location=parse_location(content, source_location=raw.location) or parse_location(raw.location or "") or raw.location,
         url=raw.url, image_url=raw.image_url, condition=raw.condition,
         created_at=raw.created_at, first_seen_at=utc_now(),
     )

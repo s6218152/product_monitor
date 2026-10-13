@@ -5,7 +5,8 @@
 ## 功能
 
 - Marketplace listing 與 Group post 統一成 `ProductListing`
-- SQLite 儲存，以 `(source, source_id)` 去重；`last_seen_at` 保存來源貼文時間
+- SQLite 儲存，以 `(source, source_id)` 去重；`last_seen_at` 保存來源貼文時間，`observed_at` 另存最近抓取時間
+- 保存最新觀測與是否符合通知條件，商品漲價或變更地區後不會沿用舊資料通知
 - fixture collector 與 CLI
 
 ## 安裝與測試
@@ -66,11 +67,22 @@ python main.py telegram --limit 10
 python main.py telegram --limit 10 --send
 ```
 
-`--send` 只會傳送 `notified_at` 尚未設定的商品；每筆成功送達後才標記，失敗的商品會保留供下次重試。
+`--send` 只會傳送符合條件且尚未通知，或低於上次通知價格的商品；每筆成功送達後才標記，失敗的商品會保留供下次重試。
+
+曾通知商品降價後也會再次通知，標記使用實際送出的價格。單筆失敗會記錄原因並延後至少 5 分鐘重試，
+其餘商品仍繼續發送；整批有失敗時指令回傳非零結束碼。帳號或聊天室權限錯誤會停止整批，
+限流時依 [Telegram Bot API 的 `retry_after`](https://core.telegram.org/bots/api#responseparameters) 延後重試。
+HTML 長訊息會在保留格式與跳脫字元的情況下分段。
+`--limit` 必須大於 0，通知資格與數量限制在 SQLite 查詢中處理。
 
 登入狀態儲存在 `.facebook-profile/`，已被 Git 忽略。它含敏感 session 資料，不可分享或提交。請勿將 `FACEBOOK_PROFILE_DIR` 指向日常使用的 Chrome profile。Facebook 頁面結構可能改變；collector 只依賴 Marketplace 商品連結，解析失敗時可先提高 `LOG_LEVEL` 檢查。
 
 可用 `--database /path/to/file.db` 暫時覆寫 `.env` 中的 `DATABASE_PATH`。
+
+程式目前不會設定 Facebook 搜尋地區與半徑；請在 Marketplace 頁面調整搜尋範圍。
+舊版 `MARKETPLACE_LOCATION`、`MARKETPLACE_RADIUS_KM` 沒有實際作用，已移除。
+商品通知的面交地區由 `app/products/targets.py` 的 `TARGET_LOCATIONS` 篩選。
+首次開啟舊資料庫時會自動新增並回填通知資格、容量與最近觀測等欄位。
 
 ## 架構
 
@@ -86,11 +98,18 @@ python main.py telegram --limit 10 --send
 ## 排程與維護
 
 VM 使用 `scripts/run-monitor.sh`，Groups 或 Marketplace 失敗時仍執行另一來源及 Telegram。
-每個來源逾時 420 秒、Telegram 90 秒；所有排程共用 `/tmp/facebook-product-monitor.lock`。
+腳本自動定位專案路徑，使用 `.venv/bin/python`，不再依賴寫死的 VM 路徑或系統 `timeout` 指令。
+每個來源逾時 420 秒、Telegram 90 秒，逾時時終止整個子程序群組。
+監控與維護內建共用 `/tmp/facebook-product-monitor.lock`；可用 `.env` 或環境變數 `MONITOR_LOCK_PATH` 覆寫。
+鎖被占用時跳過本輪；相同鎖路徑、未使用 `--close` 的既有外層 `flock` 排程也可沿用。
+排程腳本支援 Linux/macOS；手動執行單一 CLI 指令不會取得排程鎖，請避免與維護同時操作專用 profile。
 建議每 10 分鐘執行，日誌包含來源結束碼、篩選淘汰原因、群組耗時與完整流程秒數。
 
-每月執行 `scripts/maintenance.py`：刪除首次收錄超過 90 天且已通知的商品，壓縮 SQLite，
-並清除專用 profile 的 Cache、Code Cache、GPUCache（保留登入資料）。需使用同一把 flock，避免瀏覽器正在使用時清理。
+每月以 `.venv/bin/python scripts/maintenance.py` 執行維護：刪除超過 90 天未再觀測，且已通知完畢或不符合條件的商品；
+符合條件且尚未通知或正在等待降價通知的商品會保留。維護也會壓縮 SQLite，
+並清除專用 profile 的 Cache、Code Cache、GPUCache（保留登入資料）。
+維護會自行取得相同鎖，不需另外加鎖。
 未知貼文時間仍可通知並顯示「未知」，不會以抓取時間冒充作者時間。
 已通知商品低於上次通知價格時會再次通知。多容量貼文保守排除，避免價格與容量配對錯誤。
+多型號或多售價貼文也保守排除，避免把其他手機的價格套到目標商品。
 Groups 請求時間排序，但 Facebook 不一定採用；log 會記錄排序未確認、無權限與解析結果。

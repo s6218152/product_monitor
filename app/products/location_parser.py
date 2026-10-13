@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from .text import normalize_text
 
 
 _LOCATIONS = {
@@ -29,6 +30,22 @@ _LOCATIONS = {
 _PATTERN = re.compile("|".join(sorted(map(re.escape, _LOCATIONS), key=len, reverse=True)))
 
 
-def parse_location(text: str) -> str | None:
-    match = _PATTERN.search(text)
-    return _LOCATIONS[match.group(0)] if match else None
+def parse_location(text: str, *, source_location: str | None = None) -> str | None:
+    text = normalize_text(text)
+    candidates = list(_PATTERN.finditer(text))
+    choices = []
+    for match in candidates:
+        before = text[max(0, match.start() - 10):match.start()].rsplit("\n", 1)[-1]
+        after = text[match.end():match.end() + 12].split("\n", 1)[0]
+        meeting = bool(re.match(r"\s*(?:可)?(?:面交|自取|取貨)", after) or
+                       re.search(r"(?:面交|自取|取貨)(?:地點|地區|位置)?\s*[:：]?\s*$", before))
+        if not meeting and (re.match(r"\s*(?:101\s*)?(?:購入|購買|買的)", after) or
+                            re.search(r"(?:購入|購買)(?:地點|地)?\s*[:：]?\s*$", before)):
+            continue
+        city = _LOCATIONS[match.group(0)]
+        if match.group(0) == "公館" and source_location:
+            source = _PATTERN.search(normalize_text(source_location))
+            if source:
+                city = _LOCATIONS[source.group(0)]
+        choices.append((meeting, city))
+    return next((city for meeting, city in choices if meeting), choices[0][1] if choices else None)

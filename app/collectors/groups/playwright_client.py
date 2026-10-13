@@ -22,15 +22,21 @@ def snapshot(page: object) -> list[dict]:
         const messageSelector = '[data-ad-preview="message"], [data-ad-comet-preview="message"]';
         const candidates = [];
         const seen = new Set();
+        const belongsTo = (node, root) => {
+            const article = node.closest('[role="article"]');
+            return root.matches('[role="article"]') ? article === root : !article;
+        };
         for (const element of elements) {
             if (element.matches(messageSelector)) {
+                const owner = element.closest('[role="article"]');
+                if (owner && owner.parentElement.closest('[role="article"]')) continue;
                 let root = element.parentElement;
                 for (let depth = 0; root && depth < 15; depth++, root = root.parentElement) {
                     if (root.matches('body, [role="feed"], [role="main"]')) break;
                     const messages = [...root.querySelectorAll(messageSelector)]
-                        .filter(message => !message.closest('[role="article"]') || message.closest('[role="article"]') === root);
+                        .filter(message => belongsTo(message, root));
                     if (messages.length > 1) break;
-                    if ([...root.querySelectorAll('a[href]')].some(a => postPattern.test(a.href))) {
+                    if (belongsTo(element, root) && [...root.querySelectorAll('a[href]')].some(a => belongsTo(a, root) && postPattern.test(a.href))) {
                         if (!seen.has(root)) { candidates.push({article: root, body: element}); seen.add(root); }
                         break;
                     }
@@ -40,14 +46,15 @@ def snapshot(page: object) -> list[dict]:
         for (const element of elements) {
             if (!element.matches('[role="article"]') || element.parentElement.closest('[role="article"]')) continue;
             if (candidates.some(candidate => element.contains(candidate.body))) continue;
-            if (!seen.has(element)) { candidates.push({article: element, body: element.querySelector(messageSelector)}); seen.add(element); }
+            const body = [...element.querySelectorAll(messageSelector)].find(message => belongsTo(message, element));
+            if (!seen.has(element)) { candidates.push({article: element, body}); seen.add(element); }
         }
         return candidates.map(({article, body}) => {
-        const links = [...article.querySelectorAll('a[href]')];
+        const links = [...article.querySelectorAll('a[href]')].filter(link => belongsTo(link, article));
         const link = links.find(a => /\\/groups\\/[^/]+\\/(posts|permalink)\\/\\d+/.test(a.href))
             || links.find(a => /\\/commerce\\/listing\\/\\d+/.test(a.href));
         const groupLink = links.find(a => /\\/groups\\/[^/]+(?:\\/|$)/.test(a.href));
-        const timed = article.querySelector('[data-utime], time[datetime]');
+        const timed = [...article.querySelectorAll('[data-utime], time[datetime]')].find(node => belongsTo(node, article));
         const clone = article.cloneNode(true);
         clone.querySelectorAll('[role="article"], [role="textbox"], [aria-label*="留言"], [aria-label*="comment"], [role="button"]').forEach(node => node.remove());
         const fallback = clone.innerText || clone.textContent || '';

@@ -26,3 +26,19 @@ def test_normalize_group() -> None:
     assert listing.title == "iPhone 17 Pro Max"
     assert listing.price == 42000
     assert listing.location == "台中市"
+
+
+def test_marketplace_purchase_city_does_not_override_meeting_city() -> None:
+    listing = normalize_marketplace(RawMarketplaceListing(
+        "1", "iPhone 17 Pro Max 256G 售30000 台北101購入 新竹面交",
+        "https://test/1", location="新竹市",
+    ))
+    assert listing.location == "新竹市"
+
+
+def test_marketplace_uses_source_location_for_ambiguous_town() -> None:
+    listing = normalize_marketplace(RawMarketplaceListing(
+        "1", "iPhone 17 Pro Max 256G 售30000 公館面交",
+        "https://test/1", location="台北市",
+    ))
+    assert listing.location == "台北市"

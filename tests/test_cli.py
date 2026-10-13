@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import app.cli as cli
+import pytest
 
 from app.cli import main
 
@@ -55,3 +56,67 @@ def test_telegram_send_marks_each_listing_once(
     assert main(args) == 0
     assert len(sent) == 2
     assert "No new Telegram listings" in capsys.readouterr().out  # type: ignore[attr-defined]
+
+
+def test_telegram_failure_does_not_block_other_listings(tmp_path, monkeypatch):
+    database = tmp_path / "db.sqlite"
+    main(["marketplace", "--fixture", str(FIXTURES / "marketplace_iphone17_pro_max.json"), "--database", str(database)])
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
+    attempts = []
+
+    def fake_send(_token, _chat_id, message):
+        attempts.append(message)
+        if len(attempts) == 1:
+            raise RuntimeError("one listing failed")
+        return 1
+
+    monkeypatch.setattr(cli, "send_html", fake_send)
+    args = ["telegram", "--database", str(database), "--limit", "10", "--send"]
+    assert main(args) == 1
+    assert len(attempts) == 2
+    assert main(args) == 0  # failed listing is deferred; successful one is marked
+    assert len(attempts) == 2
+
+
+@pytest.mark.parametrize("limit", ["0", "-1"])
+def test_telegram_requires_positive_limit(limit):
+    with pytest.raises(SystemExit) as error:
+        cli.build_parser().parse_args(["telegram", "--limit", limit])
+    assert error.value.code == 2
+
+
+def test_telegram_rate_limit_defers_whole_chat(tmp_path, monkeypatch):
+    database = tmp_path / "db.sqlite"
+    main(["marketplace", "--fixture", str(FIXTURES / "marketplace_iphone17_pro_max.json"), "--database", str(database)])
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
+    attempts = []
+
+    def rate_limited(_token, _chat_id, message):
+        attempts.append(message)
+        raise cli.TelegramError("rate limited", status_code=429, retry_after=3600)
+
+    monkeypatch.setattr(cli, "send_html", rate_limited)
+    args = ["telegram", "--database", str(database), "--send"]
+    assert main(args) == 1
+    assert len(attempts) == 1
+    assert main(args) == 0
+    assert len(attempts) == 1  # another listing must not bypass the chat cooldown
+
+
+def test_telegram_credentials_error_stops_batch(tmp_path, monkeypatch):
+    database = tmp_path / "db.sqlite"
+    main(["marketplace", "--fixture", str(FIXTURES / "marketplace_iphone17_pro_max.json"), "--database", str(database)])
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
+    attempts = []
+
+    def unauthorized(_token, _chat_id, message):
+        attempts.append(message)
+        raise cli.TelegramError("unauthorized", status_code=401)
+
+    monkeypatch.setattr(cli, "send_html", unauthorized)
+    args = ["telegram", "--database", str(database), "--send"]
+    assert main(args) == 1
+    assert len(attempts) == 1
