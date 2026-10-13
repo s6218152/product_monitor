@@ -156,3 +156,9 @@ journalctl -t facebook-product-monitor -f
 每月維護 timer 會先停止常駐程序，再清理資料與快取，最後重啟监控；避免快取清理與瀏覽器使用重疊。
 回復舊方式：停止並停用新版 service/timer，再還原備份 crontab。
 本版只提供程式與部署設定，GitHub 更新不會自動切換 VM 的舊排程。
+
+若無 sudo 權限，可以由 Cron 每分鐘與開機執行 `scripts/fast_supervisor.py run`。
+它取得共用鎖後啟動常駐監控，已在執行時會安靜略過，程序中止後下一分鐘恢復。
+每月維護改執行 `scripts/fast_supervisor.py maintain`，暫停啟動、驗證 PID 與使用者後正常停止監控，
+取得鎖才清理，完成後取消暫停；下一分鐘恢復。
+這是 systemd 的替代方案，兩者請擇一使用。PID/暫停狀態保存在被 Git 忽略的 `data/`。
