@@ -173,15 +173,33 @@ class FastMonitor:
             from app.collectors.marketplace.playwright_client import _listing_data, _creation_time, _location, _text_field
             data = _listing_data(page.content(), item.source_id)
             description = _text_field(data, 'redacted_description')
-            if not data or not description:
-                self.retry_detail(item, 'incomplete_source_data')
+            if not data:
+                self.retry_detail(item, 'missing_item_data')
                 return
             # Card prices may be stale; prefer the detail parser's description
             # only when it includes an unambiguous sale price.
             from app.products.price_parser import parse_price
-            enriched = replace(item, description=description, location=_location(data),
-                               created_at=_creation_time(data), price=parse_price(description) or item.price)
+            enriched = replace(item, description=description or item.description,
+                               location=_location(data) or item.location,
+                               created_at=_creation_time(data), price=parse_price(description or '') or item.price)
             listing = normalize_marketplace(enriched)
+            from app.products.matcher import KeywordMatcher
+            from app.products.storage_parser import parse_storage_gb
+            content = f'{listing.title} {listing.description or ""}'
+            missing = []
+            if parse_storage_gb(content) is None:
+                missing.append('capacity')
+            if listing.price is None or listing.price <= 0:
+                missing.append('price')
+            if not listing.location:
+                missing.append('location')
+            LOGGER.info('detail_fields id=%s description_present=%s missing=%s post_time_known=%s',
+                        item.source_id, bool(description), ','.join(missing) or 'none', listing.created_at is not None)
+            if missing and KeywordMatcher(('iPhone 17 Pro Max',)).matches(content):
+                # Do not overwrite a previously validated record with an
+                # incomplete refresh, or notify with missing required fields.
+                self.retry_detail(item, 'missing_' + '_'.join(missing))
+                return
             if item.source_id in self.discovery_times:
                 listing = replace(listing, first_seen_at=self.discovery_times.pop(item.source_id))
             self.save(listing)

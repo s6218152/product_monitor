@@ -186,3 +186,34 @@ def test_page_crash_replaced_even_when_page_not_closed():
         assert not monitor.search_page.is_closed()
         assert not monitor.group_page.is_closed()
         browser.close()
+
+
+def test_empty_description_uses_title_and_source_location(tmp_path, monkeypatch):
+    from app.collectors.marketplace import playwright_client as parser
+    monkeypatch.setattr(parser, '_listing_data', lambda *a: {'creation_time': 1791873600, 'location_text': {'text': '新竹縣'}, 'redacted_description': {'text': ''}})
+    monkeypatch.setattr('app.fast_monitor.send_html', lambda *a, **k: 1)
+    with ListingRepository(tmp_path/'db') as repo:
+        monitor = bare_monitor(repo)
+        item = RawMarketplaceListing(source_id='title-only', title='iPhone 17 Pro Max 256G', price=32000, url='https://test')
+        monitor.enqueue(item)
+        monitor.detail_page = SimpleNamespace(url='https://test', goto=lambda *a, **k: None,
+            wait_for_timeout=lambda *a: None, content=lambda: '', locator=lambda *a: SimpleNamespace(count=lambda:0))
+        monitor.details()
+        row = repo.get('marketplace', item.source_id)
+        assert row['eligible'] == 1
+        assert row['notified_at'] is not None
+        assert not monitor.detail_queue
+
+
+def test_missing_capacity_is_explicit_and_not_notified(tmp_path, monkeypatch):
+    from app.collectors.marketplace import playwright_client as parser
+    monkeypatch.setattr(parser, '_listing_data', lambda *a: {'location_text': {'text': '新竹縣'}})
+    with ListingRepository(tmp_path/'db') as repo:
+        monitor = bare_monitor(repo)
+        item = RawMarketplaceListing(source_id='missing', title='iPhone 17 Pro Max', price=32000, url='https://test')
+        monitor.enqueue(item)
+        monitor.detail_page = SimpleNamespace(url='https://test', goto=lambda *a, **k: None,
+            wait_for_timeout=lambda *a: None, content=lambda: '', locator=lambda *a: SimpleNamespace(count=lambda:0))
+        monitor.details()
+        assert repo.get('marketplace', item.source_id) is None
+        assert monitor.detail_queue[0] == item
