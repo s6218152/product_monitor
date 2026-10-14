@@ -1,6 +1,9 @@
 """Fair incremental scheduling. All browser work shares one persistent context."""
 from collections import deque
 from dataclasses import dataclass
+from dataclasses import asdict
+import hashlib
+import json
 from html import escape
 from datetime import datetime, timezone
 import logging
@@ -83,15 +86,36 @@ class FastMonitor:
         self.new_page(name)
         LOGGER.warning('page_recovered page=%s queue=%d', name, len(self.detail_queue))
 
+    @staticmethod
+    def fingerprint(item):
+        from app.products.text import normalize_text
+        return hashlib.sha256(f'{normalize_text(item.title)}|{item.price}'.encode()).hexdigest()
+
     def retry_detail(self, item, reason):
-        attempts = self.detail_attempts.get(item.source_id, 0) + 1
-        self.detail_attempts[item.source_id] = attempts
-        delay = min(300, 30 * 2 ** min(attempts-1, 4))
-        self.detail_retry[item.source_id] = time.monotonic() + delay
-        if item.source_id not in self.queued:
-            self.detail_queue.append(item)
-            self.queued.add(item.source_id)
-        LOGGER.warning('detail_retry_scheduled id=%s reason=%s attempts=%d delay=%ds', item.source_id, reason, attempts, delay)
+        old = self.repository.get_detail_task(item.source_id)
+        missing_fields = reason.startswith('missing_') and reason != 'missing_item_data'
+        same_kind = old and (old['reason'] == reason or
+            (not missing_fields and old['state'] in ('transient_retry', 'cooldown')))
+        attempts = old['attempts'] + 1 if same_kind else 1
+        if reason == 'listing_unavailable':
+            state, delay = 'unavailable', 21600
+        elif missing_fields and attempts >= 2:
+            state, delay = 'awaiting_data', 21600
+        elif missing_fields:
+            state, delay = 'confirm_missing', 30
+        elif attempts >= 3:
+            state, delay = 'cooldown', 900
+        else:
+            state, delay = 'transient_retry', 30 * attempts
+        payload = asdict(item)
+        if payload['created_at']:
+            payload['created_at'] = payload['created_at'].isoformat()
+        discovered = self.discovery_times.get(item.source_id, datetime.now(timezone.utc)).isoformat()
+        self.repository.defer_detail(source_id=item.source_id, payload=json.dumps(payload), fingerprint=self.fingerprint(item),
+            state=state, reason=reason, attempts=attempts, delay_seconds=delay, discovered_at=discovered)
+        self.queued.discard(item.source_id)
+        self.discovery_times.pop(item.source_id, None)
+        LOGGER.warning('detail_deferred id=%s reason=%s state=%s attempts=%d delay=%ds', item.source_id, reason, state, attempts, delay)
 
     @staticmethod
     def check_login(page):
@@ -99,14 +123,22 @@ class FastMonitor:
             raise RuntimeError('Facebook login expired; run marketplace-login')
 
     def enqueue(self, item, *, refresh=False):
-        if item.source_id in self.queued or time.monotonic() < self.detail_retry.get(item.source_id, 0):
+        if item.source_id in self.queued:
             return
+        task = self.repository.get_detail_task(item.source_id)
+        changed = task and task['fingerprint'] != self.fingerprint(item)
+        if task and not changed:
+            return  # Delayed tasks are restored by details(), not every search.
+        if changed:
+            self.discovery_times[item.source_id] = datetime.fromisoformat(task['discovered_at'])
+            self.repository.clear_detail_task(item.source_id)
+            LOGGER.info('detail_recheck_on_card_change id=%s', item.source_id)
         row = self.repository.get('marketplace', item.source_id)
-        if row and not refresh:
+        if row and not refresh and not changed:
             return
         if row:
             observed = datetime.fromisoformat(row['observed_at']) if row['observed_at'] else None
-            if observed and (datetime.now(timezone.utc)-observed).total_seconds() < 900:
+            if not changed and observed and (datetime.now(timezone.utc)-observed).total_seconds() < 900:
                 return
             self.detail_queue.append(item)
         else:
@@ -154,15 +186,19 @@ class FastMonitor:
     def details(self):
         from dataclasses import replace
         if not self.detail_queue:
+            from app.collectors.marketplace.models import RawMarketplaceListing
+            for task in self.repository.due_detail_tasks(5):
+                if task['source_id'] in self.queued:
+                    continue
+                values = json.loads(task['payload'])
+                if values.get('created_at'):
+                    values['created_at'] = datetime.fromisoformat(values['created_at'])
+                self.detail_queue.append(RawMarketplaceListing(**values))
+                self.queued.add(task['source_id'])
+                self.discovery_times[task['source_id']] = datetime.fromisoformat(task['discovered_at'])
+        if not self.detail_queue:
             return
-        # Deferred failures remain queued without blocking fresh items.
-        for _ in range(len(self.detail_queue)):
-            item = self.detail_queue.popleft()
-            if time.monotonic() >= self.detail_retry.get(item.source_id, 0):
-                break
-            self.detail_queue.append(item)
-        else:
-            return
+        item = self.detail_queue.popleft()
         self.queued.remove(item.source_id)
         try:
             page = self.detail_page
@@ -174,7 +210,9 @@ class FastMonitor:
             data = _listing_data(page.content(), item.source_id)
             description = _text_field(data, 'redacted_description')
             if not data:
-                self.retry_detail(item, 'missing_item_data')
+                unavailable = hasattr(page, 'get_by_text') and any(page.get_by_text(text, exact=True).count() for text in
+                    ('此商品已不再提供', '此商品已售出', 'This listing is no longer available', 'This listing has been sold'))
+                self.retry_detail(item, 'listing_unavailable' if unavailable else 'missing_item_data')
                 return
             # Card prices may be stale; prefer the detail parser's description
             # only when it includes an unambiguous sale price.
@@ -203,6 +241,7 @@ class FastMonitor:
             if item.source_id in self.discovery_times:
                 listing = replace(listing, first_seen_at=self.discovery_times.pop(item.source_id))
             self.save(listing)
+            self.repository.clear_detail_task(item.source_id)
             self.detail_retry.pop(item.source_id, None)
             self.detail_attempts.pop(item.source_id, None)
         except Exception as error:

@@ -129,10 +129,11 @@ def test_detail_retry_is_retained_and_does_not_block_new_items(tmp_path, monkeyp
         monitor = bare_monitor(repo)
         failed = RawMarketplaceListing(source_id='failed', title='iPhone 17 Pro Max', url='https://test')
         monitor.retry_detail(failed, 'TimeoutError')
-        assert monitor.detail_queue[0] == failed
-        assert 'failed' in monitor.queued
+        assert not monitor.detail_queue
+        assert 'failed' not in monitor.queued
+        assert repo.get_detail_task('failed')['state'] == 'transient_retry'
         monitor.details()  # No ready item: no page needed, retains deferred work.
-        assert len(monitor.detail_queue) == 1
+        assert not monitor.detail_queue
         monitor.enqueue(replace(failed, source_id='new'))
         assert monitor.detail_queue[0].source_id == 'new'
 
@@ -216,4 +217,56 @@ def test_missing_capacity_is_explicit_and_not_notified(tmp_path, monkeypatch):
             wait_for_timeout=lambda *a: None, content=lambda: '', locator=lambda *a: SimpleNamespace(count=lambda:0))
         monitor.details()
         assert repo.get('marketplace', item.source_id) is None
-        assert monitor.detail_queue[0] == item
+        assert not monitor.detail_queue
+        assert repo.get_detail_task(item.source_id)['reason'] == 'missing_capacity'
+
+
+def test_missing_fields_cooldown_survives_restart_and_changed_card_rechecks(tmp_path):
+    from datetime import timedelta
+    path = tmp_path/'db'
+    item = RawMarketplaceListing(source_id='missing', title='iPhone 17 Pro Max', price=32000, url='https://test')
+    with ListingRepository(path) as repo:
+        monitor = bare_monitor(repo)
+        monitor.retry_detail(item, 'missing_capacity')
+        monitor.retry_detail(item, 'missing_capacity')
+        task = repo.get_detail_task(item.source_id)
+        assert task['state'] == 'awaiting_data'
+        assert datetime.fromisoformat(task['next_attempt_at']) > datetime.now(timezone.utc)+timedelta(hours=5)
+        assert not monitor.detail_queue
+    with ListingRepository(path) as repo:
+        monitor = bare_monitor(repo)
+        monitor.enqueue(item)
+        assert not monitor.detail_queue
+        monitor.enqueue(replace(item, title='iPhone 17 Pro Max 256G'))
+        assert len(monitor.detail_queue) == 1
+        assert repo.get_detail_task(item.source_id) is None
+
+
+def test_transient_errors_limit_fast_retries_even_when_error_type_changes(tmp_path):
+    from datetime import timedelta
+    with ListingRepository(tmp_path/'db') as repo:
+        monitor = bare_monitor(repo)
+        item = RawMarketplaceListing(source_id='network', title='iPhone 17 Pro Max', url='https://test')
+        for reason in ('TimeoutError','TargetClosedError','missing_item_data'):
+            monitor.retry_detail(item, reason)
+        task = repo.get_detail_task(item.source_id)
+        assert task['attempts'] == 3
+        assert task['state'] == 'cooldown'
+        assert datetime.fromisoformat(task['next_attempt_at']) > datetime.now(timezone.utc)+timedelta(minutes=14)
+
+
+def test_due_database_retry_is_processed_without_search_rediscovery(tmp_path, monkeypatch):
+    from app.collectors.marketplace import playwright_client as parser
+    monkeypatch.setattr(parser, '_listing_data', lambda *a: {'location_text': {'text':'新竹縣'}})
+    monkeypatch.setattr('app.fast_monitor.send_html', lambda *a, **k:1)
+    with ListingRepository(tmp_path/'db') as repo:
+        monitor = bare_monitor(repo)
+        item = RawMarketplaceListing(source_id='recover',title='iPhone 17 Pro Max 256G',price=32000,url='https://test')
+        monitor.retry_detail(item,'TimeoutError')
+        with repo._connection:
+            repo._connection.execute("UPDATE detail_tasks SET next_attempt_at='2000-01-01T00:00:00+00:00'")
+        monitor.detail_page = SimpleNamespace(url='https://test',goto=lambda *a,**k:None,
+            wait_for_timeout=lambda *a:None,content=lambda:'',locator=lambda *a:SimpleNamespace(count=lambda:0))
+        monitor.details()
+        assert repo.get_detail_task(item.source_id) is None
+        assert repo.get('marketplace',item.source_id)['notified_at']

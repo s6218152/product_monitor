@@ -98,6 +98,26 @@ class ListingRepository:
             "SELECT * FROM listings WHERE source = ? AND source_id = ?", (source, source_id),
         ).fetchone()
 
+    def get_detail_task(self, source_id: str):
+        return self._connection.execute('SELECT * FROM detail_tasks WHERE source_id=?', (source_id,)).fetchone()
+
+    def defer_detail(self, *, source_id, payload, fingerprint, state, reason, attempts, delay_seconds, discovered_at):
+        next_at = (datetime.now(timezone.utc) + timedelta(seconds=delay_seconds)).isoformat()
+        with self._connection:
+            self._connection.execute('''INSERT INTO detail_tasks VALUES (?,?,?,?,?,?,?,?)
+                ON CONFLICT(source_id) DO UPDATE SET payload=excluded.payload, fingerprint=excluded.fingerprint,
+                state=excluded.state, reason=excluded.reason, attempts=excluded.attempts,
+                next_attempt_at=excluded.next_attempt_at''',
+                (source_id, payload, fingerprint, state, reason, attempts, next_at, discovered_at))
+
+    def due_detail_tasks(self, limit=5):
+        return list(self._connection.execute('SELECT * FROM detail_tasks WHERE next_attempt_at<=? ORDER BY next_attempt_at LIMIT ?',
+            (datetime.now(timezone.utc).isoformat(), limit)))
+
+    def clear_detail_task(self, source_id):
+        with self._connection:
+            self._connection.execute('DELETE FROM detail_tasks WHERE source_id=?', (source_id,))
+
     def list_recent(
         self, limit: int | None = 10, locations: tuple[str, ...] = (), *,
         only_unnotified: bool = False, only_eligible: bool = False,

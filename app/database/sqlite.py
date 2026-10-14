@@ -83,3 +83,9 @@ def initialize(connection: sqlite3.Connection) -> None:
         connection.execute("CREATE INDEX IF NOT EXISTS idx_listings_eligible_recent ON listings(eligible, last_seen_at DESC, id DESC, location)")
         connection.execute("CREATE TABLE IF NOT EXISTS notification_state (id INTEGER PRIMARY KEY CHECK(id=1), next_attempt_at TEXT)")
         connection.execute("INSERT OR IGNORE INTO notification_state(id) VALUES (1)")
+        connection.execute('''CREATE TABLE IF NOT EXISTS detail_tasks (
+            source_id TEXT PRIMARY KEY, payload TEXT NOT NULL, fingerprint TEXT NOT NULL,
+            state TEXT NOT NULL, reason TEXT NOT NULL, attempts INTEGER NOT NULL,
+            next_attempt_at TEXT NOT NULL, discovered_at TEXT NOT NULL
+        )''')
+        connection.execute('CREATE INDEX IF NOT EXISTS idx_detail_tasks_due ON detail_tasks(next_attempt_at)')

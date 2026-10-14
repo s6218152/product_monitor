@@ -168,3 +168,13 @@ journalctl -t facebook-product-monitor -f
 詳情讀取失敗保留商品 ID 與首次發現時間，依 30/60/120/240/300 秒退避重試，
 重試中的商品不阻擋新商品，日誌記錄 `detail_retry_scheduled` 和 `page_recovered`。
 單次逾時記錄日誌，連續三次失敗才告警；`scan_completed` 的 outcome 明確區分成功與失敗。
+
+### 詳情重試分類（新版覆蓋上方舊退避策略）
+
+讀取成功但缺容量／價格／地區：30 秒後只確認一次，仍缺就標記 awaiting_data，6 小時後補查。
+Timeout、頁面關閉或找不到商品資料：最多三次快速嘗試（30、60 秒間隔），之後標記 cooldown，15 分鐘後再查。
+下架／無權限提示標記 unavailable，停止快速重試，6 小時後確認。
+搜尋卡標題或價格變動會解除冷卻、重新解析；描述單獨改變由 6 小時補查處理。
+已確認不符合篩選條件的商品正常入庫，不視為讀取失敗。
+冷卻任務保存在 SQLite detail_tasks，不留在快速佇列；重啟後仍保留，到期時在新商品佇列清空後低優先處理。
+每個 ID 只有一筆冷卻任務，日志 `detail_deferred` 包含具體 reason/state/attempts。
