@@ -162,3 +162,9 @@ journalctl -t facebook-product-monitor -f
 每月維護改執行 `scripts/fast_supervisor.py maintain`，暫停啟動、驗證 PID 與使用者後正常停止監控，
 取得鎖才清理，完成後取消暫停；下一分鐘恢復。
 這是 systemd 的替代方案，兩者請擇一使用。PID/暫停狀態保存在被 Git 忽略的 `data/`。
+
+頁面 crash/close 或 `TargetClosedError` 會重建對應頁面；無法建立新頁面時立即重建瀏覽器，
+保留待處理佇列，不等四小時週期。連續兩次載入逾時也會回收該頁面並安排短間隔重試。
+詳情讀取失敗保留商品 ID 與首次發現時間，依 30/60/120/240/300 秒退避重試，
+重試中的商品不阻擋新商品，日誌記錄 `detail_retry_scheduled` 和 `page_recovered`。
+單次逾時記錄日誌，連續三次失敗才告警；`scan_completed` 的 outcome 明確區分成功與失敗。

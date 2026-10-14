@@ -15,6 +15,10 @@ from app.products.normalizer import normalize_group, normalize_marketplace
 LOGGER = logging.getLogger(__name__)
 
 
+class BrowserRecoveryNeeded(RuntimeError):
+    """The browser context cannot create a usable replacement page."""
+
+
 @dataclass
 class Job:
     name: str
@@ -43,17 +47,51 @@ class Scheduler:
 class FastMonitor:
     def __init__(self, context, repository, settings):
         self.context, self.repository, self.settings = context, repository, settings
-        self.search_page = context.new_page()
-        self.group_page = context.new_page()
-        self.detail_page = context.new_page()
+        self.attach_context(context)
         self.detail_queue = deque()
         self.queued = set()
         self.detail_retry = {}
+        self.detail_attempts = {}
         self.discovery_times = {}
         self.group_plain = set()
         self.alert_times = {}
         self.zero_scans = {}
         self.catchup_scrolls = 6
+
+    def attach_context(self, context):
+        self.context = context
+        self.page_faults = set()
+        for name in ('search_page', 'group_page', 'detail_page'):
+            self.new_page(name)
+
+    def new_page(self, name):
+        try:
+            page = self.context.new_page()
+            page.on('crash', lambda _: self.page_faults.add(name))
+            page.on('close', lambda _: self.page_faults.add(name))
+            setattr(self, name, page)
+            self.page_faults.discard(name)
+        except Exception as error:
+            raise BrowserRecoveryNeeded(f'Cannot replace {name}') from error
+
+    def recover_page(self, name):
+        old = getattr(self, name)
+        try:
+            old.close()
+        except Exception:
+            pass
+        self.new_page(name)
+        LOGGER.warning('page_recovered page=%s queue=%d', name, len(self.detail_queue))
+
+    def retry_detail(self, item, reason):
+        attempts = self.detail_attempts.get(item.source_id, 0) + 1
+        self.detail_attempts[item.source_id] = attempts
+        delay = min(300, 30 * 2 ** min(attempts-1, 4))
+        self.detail_retry[item.source_id] = time.monotonic() + delay
+        if item.source_id not in self.queued:
+            self.detail_queue.append(item)
+            self.queued.add(item.source_id)
+        LOGGER.warning('detail_retry_scheduled id=%s reason=%s attempts=%d delay=%ds', item.source_id, reason, attempts, delay)
 
     @staticmethod
     def check_login(page):
@@ -117,7 +155,14 @@ class FastMonitor:
         from dataclasses import replace
         if not self.detail_queue:
             return
-        item = self.detail_queue.popleft()
+        # Deferred failures remain queued without blocking fresh items.
+        for _ in range(len(self.detail_queue)):
+            item = self.detail_queue.popleft()
+            if time.monotonic() >= self.detail_retry.get(item.source_id, 0):
+                break
+            self.detail_queue.append(item)
+        else:
+            return
         self.queued.remove(item.source_id)
         try:
             page = self.detail_page
@@ -129,8 +174,7 @@ class FastMonitor:
             data = _listing_data(page.content(), item.source_id)
             description = _text_field(data, 'redacted_description')
             if not data or not description:
-                self.detail_retry[item.source_id] = time.monotonic() + 60
-                LOGGER.warning('detail_incomplete id=%s retry_on_next_scan=true', item.source_id)
+                self.retry_detail(item, 'incomplete_source_data')
                 return
             # Card prices may be stale; prefer the detail parser's description
             # only when it includes an unambiguous sale price.
@@ -141,8 +185,10 @@ class FastMonitor:
             if item.source_id in self.discovery_times:
                 listing = replace(listing, first_seen_at=self.discovery_times.pop(item.source_id))
             self.save(listing)
-        except Exception:
-            self.detail_retry[item.source_id] = time.monotonic() + 60
+            self.detail_retry.pop(item.source_id, None)
+            self.detail_attempts.pop(item.source_id, None)
+        except Exception as error:
+            self.retry_detail(item, type(error).__name__)
             raise
 
     def group(self, url):
@@ -224,21 +270,29 @@ class FastMonitor:
             discovery_delay = (now-datetime.fromisoformat(row['first_seen_at'])).total_seconds()
             LOGGER.info('notification_sent id=%s publication_delay_seconds=%s discovery_to_send_seconds=%.1f within_10min=%s', row['id'], latency, discovery_delay, latency <= 600 if latency is not None else 'unknown')
 
-    def run(self, scheduler, *, clock=time.monotonic, sleep=time.sleep, duration=14400):
+    def run(self, scheduler, *, clock=time.monotonic, sleep=time.sleep, duration=14400, should_stop=lambda: False):
         end = clock() + duration
-        while clock() < end:
+        failures = {}
+        while clock() < end and not should_stop():
             now = clock()
             job = scheduler.next(now)
             if job is None:
                 sleep(0.5)
                 continue
             started = clock()
+            retry_soon = False
+            outcome = 'success'
             overdue = max(0, started - job.due) if job.due else 0
             if overdue > 60:
                 LOGGER.warning('scan_overdue source=%s seconds=%.1f', job.name, overdue)
             if overdue > 120:
                 self.alert('overdue:' + job.name, f'掃描落後預定時間 {overdue:.0f} 秒：{job.name}')
             try:
+                page_name = ('search_page' if job.name in ('marketplace', 'catchup') else
+                             'detail_page' if job.name == 'details' else
+                             'group_page' if job.name != 'notifications' else None)
+                if page_name and page_name in getattr(self, 'page_faults', set()):
+                    self.recover_page(page_name)
                 if job.name in ('marketplace', 'catchup'):
                     self.marketplace(catchup=job.name == 'catchup')
                 elif job.name == 'details':
@@ -247,9 +301,25 @@ class FastMonitor:
                     self.notifications()
                 else:
                     self.group(job.name)
+                failures[job.name] = 0
             except Exception as error:
+                outcome = 'failed'
+                if isinstance(error, BrowserRecoveryNeeded):
+                    raise
+                failures[job.name] = failures.get(job.name, 0) + 1
                 LOGGER.warning('scan_failed source=%s error_type=%s', job.name, type(error).__name__)
-                self.alert('failed:' + job.name, f'{job.name} 執行失敗：{type(error).__name__}，請檢查登入與日誌')
+                message = str(error)
+                closed = type(error).__name__ == 'TargetClosedError' or 'Page crashed' in message or 'Target crashed' in message
+                if page_name and (closed or (type(error).__name__ == 'TimeoutError' and failures[job.name] >= 2)):
+                    self.recover_page(page_name)
+                    # Attempt again soon instead of waiting the full scan interval.
+                    retry_soon = True
+                if closed:
+                    LOGGER.warning('scan_recovery_requested source=%s', job.name)
+                elif failures[job.name] >= 3:
+                    self.alert('failed:' + job.name, f'{job.name} 連續執行失敗：{type(error).__name__}，請檢查日誌')
             finally:
                 scheduler.finish(job, started, clock())
-                LOGGER.info('scan_completed source=%s elapsed=%.1f queue=%d', job.name, clock()-started, len(self.detail_queue))
+                if retry_soon:
+                    job.due = min(job.due, clock() + 15)
+                LOGGER.info('scan_completed source=%s elapsed=%.1f queue=%d outcome=%s', job.name, clock()-started, len(self.detail_queue), outcome)

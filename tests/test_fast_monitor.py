@@ -15,6 +15,7 @@ def bare_monitor(repo):
     monitor.detail_queue = deque()
     monitor.queued = set()
     monitor.detail_retry = {}
+    monitor.detail_attempts = {}
     monitor.discovery_times = {}
     monitor.settings = SimpleNamespace(telegram_bot_token='test', telegram_chat_id='test')
     return monitor
@@ -121,3 +122,67 @@ def test_failed_job_does_not_stop_other_sources(tmp_path):
     monitor.notifications = lambda: now.__setitem__(0, now[0]+1)
     monitor.run(Scheduler(('group-a',)), clock=lambda: now[0], sleep=lambda x: now.__setitem__(0, now[0]+x), duration=3)
     assert calls[:2] == ['marketplace', 'group-a']
+
+
+def test_detail_retry_is_retained_and_does_not_block_new_items(tmp_path, monkeypatch):
+    with ListingRepository(tmp_path/'db') as repo:
+        monitor = bare_monitor(repo)
+        failed = RawMarketplaceListing(source_id='failed', title='iPhone 17 Pro Max', url='https://test')
+        monitor.retry_detail(failed, 'TimeoutError')
+        assert monitor.detail_queue[0] == failed
+        assert 'failed' in monitor.queued
+        monitor.details()  # No ready item: no page needed, retains deferred work.
+        assert len(monitor.detail_queue) == 1
+        monitor.enqueue(replace(failed, source_id='new'))
+        assert monitor.detail_queue[0].source_id == 'new'
+
+
+def test_closed_search_page_recovers_without_stopping_groups(tmp_path):
+    class TargetClosedError(Exception): pass
+    monitor = bare_monitor(None)
+    now = [0]
+    recovered = []
+    groups = []
+    monitor.alert = lambda *a: None
+    monitor.recover_page = lambda name: recovered.append(name)
+    def fail(**kw):
+        now[0] += 1
+        raise TargetClosedError('closed')
+    monitor.marketplace = fail
+    def group(url):
+        groups.append(url)
+        now[0] += 1
+    monitor.group = group
+    monitor.details = lambda: now.__setitem__(0, now[0]+1)
+    monitor.notifications = lambda: now.__setitem__(0, now[0]+1)
+    monitor.run(Scheduler(('group-a',)), clock=lambda: now[0], duration=3)
+    assert recovered == ['search_page']
+    assert groups == ['group-a']
+
+
+def test_context_loss_escalates_for_browser_rebuild():
+    from app.fast_monitor import BrowserRecoveryNeeded
+    import pytest
+    monitor = object.__new__(FastMonitor)
+    def fail(): raise RuntimeError('context closed')
+    monitor.context = SimpleNamespace(new_page=fail)
+    monitor.page_faults = set()
+    with pytest.raises(BrowserRecoveryNeeded):
+        monitor.new_page('search_page')
+
+
+def test_page_crash_replaced_even_when_page_not_closed():
+    from playwright.sync_api import sync_playwright
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        context = browser.new_context()
+        monitor = object.__new__(FastMonitor)
+        monitor.detail_queue = deque()
+        monitor.attach_context(context)
+        old = monitor.search_page
+        monitor.page_faults.add('search_page')
+        monitor.recover_page('search_page')
+        assert old.is_closed()
+        assert not monitor.search_page.is_closed()
+        assert not monitor.group_page.is_closed()
+        browser.close()

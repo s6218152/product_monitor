@@ -10,7 +10,7 @@ PROJECT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT))
 from app.config import load_settings
 from app.database.repository import ListingRepository
-from app.fast_monitor import FastMonitor, Scheduler
+from app.fast_monitor import FastMonitor, Scheduler, BrowserRecoveryNeeded
 from app.runtime import monitor_lock
 
 
@@ -21,8 +21,12 @@ def positive_env(name, default):
     return value
 
 
+STOP_REQUESTED = False
+
+
 def stop(signum, frame):
-    raise KeyboardInterrupt
+    global STOP_REQUESTED
+    STOP_REQUESTED = True
 
 
 def main():
@@ -43,14 +47,28 @@ def main():
                 return 1
             scheduler = Scheduler(settings.facebook_group_urls, marketplace_interval=marketplace_interval, group_interval=group_interval)
             with ListingRepository(settings.database_path) as repository, sync_playwright() as p:
-                while True:
+                monitor = None
+                while not STOP_REQUESTED:
                     context = p.chromium.launch_persistent_context(settings.facebook_profile_dir, headless=settings.facebook_headless, locale='zh-TW')
                     try:
                         logging.info('fast_monitor_started marketplace_interval=%s group_interval=%s', marketplace_interval, group_interval)
-                        FastMonitor(context, repository, settings).run(scheduler)
+                        if monitor is None:
+                            monitor = FastMonitor(context, repository, settings)
+                        else:
+                            monitor.attach_context(context)
+                        monitor.run(scheduler, should_stop=lambda: STOP_REQUESTED)
+                    except BrowserRecoveryNeeded:
+                        logging.warning('browser_recovery_requested pending_details_preserved=true')
                     finally:
-                        context.close()
+                        try:
+                            context.close()
+                        except Exception:
+                            pass
                     logging.info('browser_recycle interval_hours=4')
+                    if not STOP_REQUESTED:
+                        time.sleep(2)
+                logging.info('fast_monitor_stopped')
+                return 0
     except KeyboardInterrupt:
         logging.info('fast_monitor_stopped')
         return 0
