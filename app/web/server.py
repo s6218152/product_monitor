@@ -63,9 +63,10 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     parser = argparse.ArgumentParser(description='Facebook monitor settings UI')
     parser.add_argument('--port', type=int, default=8080)
+    parser.add_argument('--host', default='127.0.0.1', help='Bind address; use the VM LAN IP for direct LAN access')
     args = parser.parse_args()
-    server = HTTPServer(('127.0.0.1', args.port), Handler)
-    print(f'設定頁面：http://127.0.0.1:{args.port}', flush=True)
+    server = HTTPServer((args.host, args.port), Handler)
+    print(f'設定頁面：http://{args.host}:{args.port}', flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
