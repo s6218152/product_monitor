@@ -52,3 +52,20 @@ def test_failure_marks_report_stopped(tmp_path, monkeypatch):
         with report_status(settings, Scheduler([])):
             raise RuntimeError('startup failed')
     assert read_status()['state'] == 'stopped'
+
+
+def test_applied_groups_update_status_and_clear_pending(tmp_path, monkeypatch):
+    settings = setup_paths(tmp_path, monkeypatch)
+    scheduler = Scheduler(settings.facebook_group_urls)
+    reporter = MonitorStatus(settings, scheduler)
+    save_config({'groups': [{'url': 'https://www.facebook.com/groups/new/'}],
+                 'products': [{'keyword': 'test', 'max_price': 100}]})
+    assert read_status()['pending_changes']
+    urls = ('https://www.facebook.com/groups/new/',)
+    scheduler.sync_groups(urls)
+    reporter.groups_applied(urls, scheduler)
+    value = read_status()
+    assert not value['pending_changes']
+    assert value['groups'] == list(urls)
+    assert settings.facebook_group_urls[0] not in value['scans']
+    assert urls[0] in value['scans']

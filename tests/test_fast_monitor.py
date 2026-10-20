@@ -270,3 +270,38 @@ def test_due_database_retry_is_processed_without_search_rediscovery(tmp_path, mo
         monitor.details()
         assert repo.get_detail_task(item.source_id) is None
         assert repo.get('marketplace',item.source_id)['notified_at']
+
+
+def test_sync_groups_preserves_jobs_and_replaces_removed_groups():
+    scheduler = Scheduler(('old', 'retained'), group_interval=75)
+    retained = next(job for job in scheduler.jobs if job.name == 'retained')
+    retained.due = 123
+    retained.last_finished = 100
+    assert scheduler.sync_groups(('retained', 'new'))
+    assert [job.name for job in scheduler.jobs] == ['marketplace', 'retained', 'new', 'details', 'notifications', 'catchup']
+    assert scheduler.jobs[1] is retained
+    assert retained.due == 123
+    assert scheduler.jobs[2].due == 0
+    assert scheduler.jobs[2].interval == 75
+    assert not scheduler.sync_groups(('retained', 'new'))
+
+
+def test_running_monitor_reloads_groups_without_restart(tmp_path, monkeypatch):
+    from app.monitor_config import save_config
+    monkeypatch.setenv('MONITOR_CONFIG_PATH', str(tmp_path/'settings.json'))
+    monitor = bare_monitor(None)
+    now = [0]
+    calls = []
+    monitor.marketplace = lambda **kw: now.__setitem__(0, now[0]+1)
+    def group(url):
+        calls.append(url)
+        now[0] += 1
+    monitor.group = group
+    monitor.details = lambda: now.__setitem__(0, now[0]+1)
+    monitor.notifications = lambda: now.__setitem__(0, now[0]+1)
+    save_config({'groups': [{'url': 'https://www.facebook.com/groups/new/'}],
+                 'products': [{'keyword': 'test', 'max_price': 100}]})
+    scheduler = Scheduler(('old',))
+    monitor.run(scheduler, clock=lambda: now[0], sleep=lambda value: now.__setitem__(0, now[0]+value), duration=4)
+    assert calls == ['https://www.facebook.com/groups/new/']
+    assert all(job.name != 'old' for job in scheduler.jobs)

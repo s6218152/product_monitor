@@ -44,6 +44,14 @@ class MonitorStatus:
         except (OSError, ValueError):
             LOGGER.warning('monitor_status_write_failed', exc_info=True)
 
+    def groups_applied(self, urls, scheduler):
+        self.data['groups'] = list(urls)
+        self.data['groups_applied_at'] = stamp()
+        previous = self.data['scans']
+        self.data['scans'] = {job.name: previous.get(job.name, {'interval_seconds': job.interval})
+                              for job in scheduler.jobs}
+        self.write()
+
     def pulse(self):
         if time.monotonic() - self.last_write >= 10:
             self.write()

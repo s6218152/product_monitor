@@ -32,9 +32,24 @@ class Job:
 
 class Scheduler:
     def __init__(self, group_urls, *, marketplace_interval=120, group_interval=300):
+        self.default_groups = tuple(group_urls)
+        self.group_interval = group_interval
         self.jobs = [Job('marketplace', marketplace_interval)]
-        self.jobs.extend(Job(url, group_interval) for url in group_urls)
+        self.jobs.extend(Job(url, group_interval) for url in self.default_groups)
         self.jobs.extend([Job('details', 1), Job('notifications', 30), Job('catchup', 900)])
+
+    def sync_groups(self, urls):
+        """Keep retained jobs' timing; newly added groups are ready immediately."""
+        internal = {'marketplace', 'details', 'notifications', 'catchup'}
+        urls = tuple(dict.fromkeys(urls))
+        current = tuple(job.name for job in self.jobs if job.name not in internal)
+        if current == urls:
+            return False
+        existing = {job.name: job for job in self.jobs}
+        self.jobs = [existing['marketplace']]
+        self.jobs.extend(existing.get(url) or Job(url, self.group_interval) for url in urls)
+        self.jobs.extend(existing[name] for name in ('details', 'notifications', 'catchup'))
+        return True
 
     def next(self, now):
         ready = [job for job in self.jobs if job.due <= now]
@@ -331,7 +346,27 @@ class FastMonitor:
         end = clock() + duration
         failures = {}
         reporter = getattr(self, 'status_reporter', None)
+        next_config_check = 0
         while clock() < end and not should_stop():
+            if clock() >= next_config_check:
+                next_config_check = clock() + 2
+                try:
+                    from app.monitor_config import read_config
+                    config = read_config()
+                    urls = tuple(group['url'] for group in config['groups']) if config else scheduler.default_groups
+                    if scheduler.sync_groups(urls):
+                        active = set(urls)
+                        if hasattr(self, 'group_plain'):
+                            self.group_plain.intersection_update(active)
+                        if hasattr(self, 'zero_scans'):
+                            self.zero_scans = {url: count for url, count in self.zero_scans.items() if url in active}
+                        failures = {name: count for name, count in failures.items()
+                                    if name in {job.name for job in scheduler.jobs}}
+                        if reporter:
+                            reporter.groups_applied(urls, scheduler)
+                        LOGGER.info('group_config_applied groups=%d', len(urls))
+                except (OSError, ValueError):
+                    LOGGER.warning('group_config_reload_failed keeping_previous_groups=true', exc_info=True)
             if reporter:
                 reporter.pulse()
             now = clock()
