@@ -273,6 +273,9 @@ class FastMonitor:
         seen = set()
         for step in range(3):
             page.wait_for_timeout(1000)
+            if step == 0:
+                from app.group_names import capture_name
+                capture_name(page, url)
             for label in ('查看更多', '顯示更多'):
                 controls = page.get_by_text(label, exact=True)
                 for index in range(min(controls.count(), 3)):

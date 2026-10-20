@@ -98,6 +98,8 @@ def read_status():
                 alive = True
         if data['state'] != 'stopped' and (not alive or age > 120):
             data['state'] = 'stale'
+        from app.group_names import read_names
+        data['group_names'] = read_names()
         data['heartbeat_age_seconds'] = round(age)
         configured = read_config()
         data['pending_changes'] = configured != data.get('rules') or (

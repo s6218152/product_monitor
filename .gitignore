@@ -18,3 +18,6 @@ data/monitor-settings.tmp
 
 data/monitor-status.json
 data/monitor-status.*.tmp
+
+data/group-names.json
+data/group-names.tmp

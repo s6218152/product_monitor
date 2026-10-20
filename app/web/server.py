@@ -28,6 +28,9 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 settings = load_settings()
                 value = read_config() or {'groups': [{'name': '', 'url': url} for url in settings.facebook_group_urls], 'products': []}
+                from app.group_names import read_names, group_key
+                names = read_names()
+                value = {**value, 'groups': [{**group, 'auto_name': names.get(group_key(group['url']), '')} for group in value['groups']]}
                 return self.respond(200, value)
             except (OSError, ValueError) as error:
                 return self.respond(500, {'error': str(error)})
