@@ -178,3 +178,42 @@ Timeout、頁面關閉或找不到商品資料：最多三次快速嘗試（30�
 已確認不符合篩選條件的商品正常入庫，不視為讀取失敗。
 冷卻任務保存在 SQLite detail_tasks，不留在快速佇列；重啟後仍保留，到期時在新商品佇列清空後低優先處理。
 每個 ID 只有一筆冷卻任務，日志 `detail_deferred` 包含具體 reason/state/attempts。
+
+## 本機前端設定頁
+
+```bash
+.venv/bin/python -m app.web.server
+```
+
+開啟 http://127.0.0.1:8080，可新增、刪除 Facebook Groups、商品關鍵字與各商品價格上限。
+設定儲存在 `data/monitor-settings.json`（不納入 Git）；可用 `MONITOR_CONFIG_PATH` 覆寫。
+儲存後重新啟動既有監控程序，載入新的 Group 清單。此頁不會啟動或停止監控。
+自訂規則取代預設型號、容量、地區篩選，以「符合任一商品關鍵字且價格大於零、不超過上限」判斷。
+Marketplace 搜尋詞仍為原有 iPhone 型號；新增商品透過 Groups 掃描。
+刪除設定檔並重新啟動即可恢復 `.env` 群組與原本商品條件。
+此管理頁僅綁定本機，不需額外安裝前端套件。
+
+管理頁上方的「目前監控狀況」每 10 秒讀取常駐監控的回報，顯示最近載入的 Group、
+最近回報的商品條件、目前工作，以及各來源最後完成時間（台灣時間）、成功／失敗與耗時。
+需重新啟動更新後的 `scripts/fast_monitor.py` 才會開始回報；本頁不會自行啟動監控。
+舊 Cron、單次 CLI 或另一台 VM 的監控不會回報到本機頁面。
+狀態保存在 `data/monitor-status.json`，可用 `MONITOR_STATUS_PATH` 覆寫；管理頁與監控需使用相同設定路徑。
+超過 120 秒未回報或程序已離線會標示異常；正常結束則標示已停止。
+
+### Server 管理頁服務
+
+與監控程序放在同一份 checkout，以下 unit 的使用者與路徑需符合 server：
+
+```bash
+sudo install -m 644 deploy/facebook-product-monitor-web.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now facebook-product-monitor-web.service
+```
+
+管理頁綁定 server 的 `127.0.0.1:8080`。從自己電腦以 SSH 轉送連線：
+
+```bash
+ssh -N -L 18080:127.0.0.1:8080 USER@SERVER
+```
+
+保持 SSH 連線後開啟 http://127.0.0.1:18080，可查看 server 的實際監控回報與修改設定。

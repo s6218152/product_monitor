@@ -20,6 +20,14 @@ def matches_capacity_price(text: str, price: int | None) -> bool:
 
 def rejection_reason(text: str, price: int | None, location: str | None) -> str | None:
     text = normalize_text(text)
+    from app.monitor_config import read_config
+    custom = read_config()
+    if custom is not None:
+        for product in custom["products"]:
+            if KeywordMatcher((product["keyword"],)).matches(text):
+                if price is not None and 0 < price <= product["max_price"]:
+                    return None
+        return "custom_product_or_price"
     if not _MATCHER.matches(text):
         return "model"
     if re.search(r"(?<!非)(?<!不)(?:收購|求購|徵求|出租)|(?:^|[\s【\[(])徵", text):

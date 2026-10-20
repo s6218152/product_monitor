@@ -12,6 +12,7 @@ from app.config import load_settings
 from app.database.repository import ListingRepository
 from app.fast_monitor import FastMonitor, Scheduler, BrowserRecoveryNeeded
 from app.runtime import monitor_lock
+from app.monitor_status import report_status
 
 
 def positive_env(name, default):
@@ -46,7 +47,7 @@ def main():
                 logging.error('fast_monitor_start_blocked lock_busy')
                 return 1
             scheduler = Scheduler(settings.facebook_group_urls, marketplace_interval=marketplace_interval, group_interval=group_interval)
-            with ListingRepository(settings.database_path) as repository, sync_playwright() as p:
+            with report_status(settings, scheduler) as reporter, ListingRepository(settings.database_path) as repository, sync_playwright() as p:
                 monitor = None
                 while not STOP_REQUESTED:
                     context = p.chromium.launch_persistent_context(settings.facebook_profile_dir, headless=settings.facebook_headless, locale='zh-TW')
@@ -56,6 +57,7 @@ def main():
                             monitor = FastMonitor(context, repository, settings)
                         else:
                             monitor.attach_context(context)
+                        monitor.status_reporter = reporter
                         monitor.run(scheduler, should_stop=lambda: STOP_REQUESTED)
                     except BrowserRecoveryNeeded:
                         logging.warning('browser_recovery_requested pending_details_preserved=true')

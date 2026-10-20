@@ -12,3 +12,9 @@ cookies*
 *session*
 .facebook-profile/
 playwright/.auth/
+
+data/monitor-settings.json
+data/monitor-settings.tmp
+
+data/monitor-status.json
+data/monitor-status.*.tmp

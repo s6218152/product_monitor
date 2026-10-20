@@ -330,7 +330,10 @@ class FastMonitor:
     def run(self, scheduler, *, clock=time.monotonic, sleep=time.sleep, duration=14400, should_stop=lambda: False):
         end = clock() + duration
         failures = {}
+        reporter = getattr(self, 'status_reporter', None)
         while clock() < end and not should_stop():
+            if reporter:
+                reporter.pulse()
             now = clock()
             job = scheduler.next(now)
             if job is None:
@@ -339,6 +342,9 @@ class FastMonitor:
             started = clock()
             retry_soon = False
             outcome = 'success'
+            error_type = None
+            if reporter:
+                reporter.begin(job.name)
             overdue = max(0, started - job.due) if job.due else 0
             if overdue > 60:
                 LOGGER.warning('scan_overdue source=%s seconds=%.1f', job.name, overdue)
@@ -361,6 +367,7 @@ class FastMonitor:
                 failures[job.name] = 0
             except Exception as error:
                 outcome = 'failed'
+                error_type = type(error).__name__
                 if isinstance(error, BrowserRecoveryNeeded):
                     raise
                 failures[job.name] = failures.get(job.name, 0) + 1
@@ -376,6 +383,8 @@ class FastMonitor:
                 elif failures[job.name] >= 3:
                     self.alert('failed:' + job.name, f'{job.name} 連續執行失敗：{type(error).__name__}，請檢查日誌')
             finally:
+                if reporter:
+                    reporter.finish(job.name, outcome, clock()-started, error_type)
                 scheduler.finish(job, started, clock())
                 if retry_soon:
                     job.due = min(job.due, clock() + 15)

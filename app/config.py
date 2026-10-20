@@ -42,6 +42,8 @@ class Settings:
 
 def load_settings(env_path: Path = Path(".env")) -> Settings:
     _load_dotenv(env_path)
+    from app.monitor_config import read_config
+    monitor_config = read_config()
     return Settings(
         database_path=Path(os.getenv("DATABASE_PATH", "data/facebook_monitor.db")),
         monitor_lock_path=Path(os.getenv("MONITOR_LOCK_PATH", "/tmp/facebook-product-monitor.lock")),
@@ -49,7 +51,7 @@ def load_settings(env_path: Path = Path(".env")) -> Settings:
         facebook_profile_dir=Path(os.getenv("FACEBOOK_PROFILE_DIR", ".facebook-profile")),
         facebook_headless=os.getenv("FACEBOOK_HEADLESS", "false").casefold() in {"1", "true", "yes"},
         marketplace_max_scrolls=_scroll_limit("MARKETPLACE_MAX_SCROLLS"),
-        facebook_group_urls=tuple(
+        facebook_group_urls=tuple(group["url"] for group in monitor_config["groups"]) if monitor_config else tuple(
             url.strip()
             for url in os.getenv("FACEBOOK_GROUP_URLS", "").split(",")
             if url.strip()

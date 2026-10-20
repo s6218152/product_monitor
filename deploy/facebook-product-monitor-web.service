@@ -1,0 +1,19 @@
+[Unit]
+Description=Facebook product monitor local management UI
+After=network.target
+
+[Service]
+Type=simple
+User=s6218152
+WorkingDirectory=/home/s6218152/facebook-product-monitor
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/s6218152/facebook-product-monitor/.venv/bin/python -m app.web.server --port 8080
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
