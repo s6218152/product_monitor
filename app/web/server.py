@@ -2,6 +2,7 @@
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import argparse
 import json
+import os
 from pathlib import Path
 from app.config import load_settings
 from app.monitor_config import read_config, save_config
@@ -41,7 +42,9 @@ class Handler(BaseHTTPRequestHandler):
             return self.respond(404, {'error': '找不到頁面'})
         # JSON-only and same-origin requests prevent cross-site form submissions.
         origin = self.headers.get('Origin')
-        if origin and origin != f'http://127.0.0.1:{self.server.server_port}' and origin != f'http://localhost:{self.server.server_port}':
+        allowed_origins = {f'http://127.0.0.1:{self.server.server_port}', f'http://localhost:{self.server.server_port}'}
+        allowed_origins.update(value.strip() for value in os.getenv('WEB_ALLOWED_ORIGINS', '').split(',') if value.strip())
+        if origin and origin not in allowed_origins:
             return self.respond(403, {'error': '不允許跨網站儲存設定'})
         if self.headers.get('Content-Type', '').split(';')[0] != 'application/json':
             return self.respond(415, {'error': '需要 JSON 格式'})
