@@ -32,6 +32,34 @@ def voucher_price(text):
     return None
 
 
+def voucher_discount(text):
+    """Compare one coherent face/sale pair, or explicit discounts; never pair multiple offers."""
+    text = normalize_text(text)
+    ratios = {Decimal(value) / (100 if Decimal(value) > 10 else 10)
+              for value in re.findall(r'(\d+(?:\.\d+)?)\s*折', text)}
+    ratios.update(Decimal(value) / 100 for value in re.findall(r'(\d+(?:\.\d+)?)\s*%', text))
+    face_pattern = r'(?:面額|票面)\s*[:：]?\s*\$?\s*(\d[\d,]*)'
+    sale_pattern = r'(?:售價|賣價|轉讓價|售|總售價|總價)\s*[:：]?\s*\$?\s*(\d[\d,]*)(?![\d,.]|\s*(?:折|%))'
+    amounts = lambda pattern: {int(v.replace(',', '')) for v in re.findall(pattern, text)}
+    faces, sales = amounts(face_pattern), amounts(sale_pattern)
+    totals = amounts(r'總面額\s*[:：]?\s*\$?\s*(\d[\d,]*)')
+    total_sale = amounts(r'(?:總售價|總價|整批售)\s*[:：]?\s*\$?\s*(\d[\d,]*)')
+    actual = voucher_price(text)
+    pair = None
+    if len(totals) == 1 and len(total_sale) == 1:
+        pair = (next(iter(totals)), next(iter(total_sale)))
+    elif len(faces) == 1 and len(sales) == 1 and (totals or not re.search(r'(?:[2-9]|[1-9]\d+)\s*張|每張|每份', text)):
+        pair = (next(iter(faces)), next(iter(sales)))
+    if pair and pair[0] > 0 and pair[1] > 0:
+        ratios.add(Decimal(pair[1]) / Decimal(pair[0]))
+        actual = pair[1]
+    if not ratios or any(not 0 < value <= 1 for value in ratios):
+        return (max(ratios) if ratios else None), actual
+    if len(ratios) > 1:
+        return None, None
+    return next(iter(ratios)), actual
+
+
 def assess_custom(text, price, location=None, source=None):
     config = read_config()
     if not config or not config['products']:
@@ -47,7 +75,16 @@ def assess_custom(text, price, location=None, source=None):
     last_price = price
     for product in candidates:
         kind = product.get('type', 'general')
-        actual = voucher_price(text) if kind == 'voucher' else price
+        if kind == 'voucher':
+            ratio, actual = voucher_discount(text)
+            if ratio is not None:
+                if 0 < ratio <= Decimal(str(product.get('max_discount', 92))) / 100:
+                    return Assessment('matched', actual, f'折數：{ratio * 100:g}%（售價／面額），不限地區')
+                continue
+            if product.get('notify_uncertain', True):
+                pending = Assessment('pending', None, '折數待確認（未提供或多組價格無法配對）')
+            continue
+        actual = price
         last_price = actual
         ambiguous = actual is None or actual <= 0
         if kind == 'phone':

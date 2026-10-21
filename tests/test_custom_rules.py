@@ -11,7 +11,7 @@ from test_repository import make_listing
 
 def configure(**product):
     return save_config({'groups': [{'url': 'https://www.facebook.com/groups/123/'}],
-        'products': [{'keyword': '禮券', 'max_price': 1000, 'type': 'voucher', 'source': 'group', **product}],
+        'products': [{'keyword': '禮券', 'max_price': 1000, 'type': 'voucher', 'source': 'group', 'max_discount': 100, **product}],
         'marketplace_enabled': False})
 
 
@@ -31,7 +31,7 @@ def test_pending_and_source_rules():
     assert assess_custom('售禮券 面額1000',1000,source='marketplace').status=='rejected'
     assert assess_custom('求購禮券 售950',950,source='group').status=='rejected'
     assert assess_custom('禮券已售出 售950',950,source='group').status=='rejected'
-    assert assess_custom('售禮券 售1100',1100,source='group').status=='rejected'
+    assert assess_custom('售禮券 面額1000 售1100',1100,source='group').status=='rejected'
     configure(notify_uncertain=False)
     assert assess_custom('售禮券 面額1000',1000,source='group').status=='rejected'
 
@@ -92,3 +92,32 @@ def test_voucher_defaults_to_uncertain_notifications():
     value=configure()
     assert value['products'][0]['notify_uncertain'] is True
     assert assess_custom('售禮券 面額1000',1000,source='group').status=='pending'
+
+
+@pytest.mark.parametrize('text,status', [
+    ('售禮券 92折', 'matched'), ('售禮券 9.2折', 'matched'),
+    ('售禮券 9折', 'matched'), ('售禮券 面額1000 售920', 'matched'),
+    ('售禮券 總面額50000 總售價46000', 'matched'),
+    ('售禮券 總面額50000 售46000', 'matched'),
+    ('售禮券 面額1000 售921', 'rejected'), ('售禮券 93折', 'rejected'),
+    ('售禮券 面額1000000 92折', 'matched'),
+    ('售禮券 面額1000', 'pending'), ('售禮券 售920', 'pending'),
+    ('售禮券 面額1000 售900 面額500 售480', 'pending'),
+])
+def test_voucher_92_percent_regardless_amount_and_location(text, status):
+    configure(max_discount=92,max_price=1,notify_uncertain=True)
+    assert assess_custom(text,1000000,location='高雄市',source='group').status==status
+
+
+def test_new_discount_limit_rechecked_before_sending_old_eligible_row(tmp_path, monkeypatch):
+    from test_fast_monitor import bare_monitor
+    configure(max_discount=100)
+    sent=[]
+    monkeypatch.setattr('app.fast_monitor.send_html',lambda *args,**kwargs:sent.append(args))
+    with ListingRepository(tmp_path/'db') as repo:
+        listing=replace(make_listing(),source='group',title='禮券',description='售禮券 面額1000 售950',price=950)
+        assert repo.save(listing).is_eligible
+        configure(max_discount=92,notify_uncertain=True)
+        bare_monitor(repo).notifications()
+        assert not sent
+        assert not repo.get('group',listing.source_id)['eligible']

@@ -45,6 +45,9 @@ def validate(data: object) -> dict:
         keyword, price = product.get('keyword'), product.get('max_price')
         if not isinstance(keyword, str) or not keyword.strip() or len(keyword) > 120:
             raise ValueError('商品關鍵字須為 1–120 字')
+        kind = product.get('type', 'general')
+        if kind == 'voucher' and price in (None, 0):
+            price = 100000000
         if type(price) is not int or not 0 < price <= 100000000:
             raise ValueError('價格須為 1–100,000,000 元的整數')
         kind = product.get('type', 'general')
@@ -52,7 +55,10 @@ def validate(data: object) -> dict:
         uncertain = product.get('notify_uncertain', kind == 'voucher')
         if kind not in ('phone', 'voucher', 'general') or source not in ('both', 'group', 'marketplace') or type(uncertain) is not bool:
             raise ValueError('商品類型、來源或待確認通知設定不正確')
-        clean_products.append({'keyword': keyword.strip(), 'max_price': price, 'type': kind, 'source': source, 'notify_uncertain': uncertain})
+        discount = product.get('max_discount', 92)
+        if type(discount) not in (int, float) or not 0 < discount <= 100:
+            raise ValueError('禮券最高折數百分比須大於 0 且不超過 100，例如 92')
+        clean_products.append({'max_discount': discount, 'keyword': keyword.strip(), 'max_price': price, 'type': kind, 'source': source, 'notify_uncertain': uncertain})
     return {'groups': clean_groups, 'products': clean_products, 'marketplace_query': query.strip(), 'marketplace_enabled': enabled}
 
 

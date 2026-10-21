@@ -100,6 +100,19 @@ class ListingRepository:
                 existing.add(pair)
         return results
 
+    def refresh_assessment(self, listing_id):
+        """Apply current custom rules before delivery without changing observation times."""
+        from app.products.custom_rules import assess_custom
+        row = self._connection.execute('SELECT * FROM listings WHERE id=?', (listing_id,)).fetchone()
+        if row is None:
+            return None
+        result = assess_custom(f"{row['title']} {row['description'] or ''}", row['price'], row['location'], row['source'])
+        if result is not None:
+            with self._connection:
+                self._connection.execute('UPDATE listings SET price=?, eligible=?, match_status=?, match_note=? WHERE id=?',
+                    (result.price, int(result.status != 'rejected'), result.status, result.reason, listing_id))
+        return self._connection.execute('SELECT * FROM listings WHERE id=?', (listing_id,)).fetchone()
+
     def count(self) -> int:
         return int(self._connection.execute("SELECT COUNT(*) AS count FROM listings").fetchone()["count"])
 

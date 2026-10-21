@@ -347,6 +347,9 @@ class FastMonitor:
         if listing_id is not None:
             rows = [row for row in rows if row['id'] == listing_id]
         for row in rows:
+            row = self.repository.refresh_assessment(row['id'])
+            if row is None or not row['eligible']:
+                continue
             try:
                 send_html(self.settings.telegram_bot_token or '', self.settings.telegram_chat_id or '', format_listings([row]), timeout=10)
             except Exception as error:

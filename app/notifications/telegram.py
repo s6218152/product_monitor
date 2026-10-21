@@ -102,6 +102,8 @@ def format_listings(listings: list[Row]) -> str:
         )
         if "match_status" in listing.keys() and listing["match_status"] == 'pending':
             blocks[-1] = '⚠️ 待確認：' + escape(listing['match_note'] or '資訊不足') + '\n' + blocks[-1]
+        if 'match_note' in listing.keys() and listing['match_note'] and listing['match_status'] == 'matched':
+            blocks[-1] += '\n判斷：' + escape(listing['match_note'])
         if config and config['products']:
             from app.products.matcher import KeywordMatcher
             phone = any(p.get('type') == 'phone' and KeywordMatcher((p['keyword'],)).matches(f"{listing['title']} {listing['description'] or ''}") for p in config['products'])
