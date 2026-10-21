@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import logging
+import json
 from pathlib import Path
 import re
 import time
@@ -70,6 +71,49 @@ def snapshot(page: object) -> list[dict]:
             timeLabel: link ? (link.getAttribute('aria-label') || link.innerText) : null};
     });
     }""")  # type: ignore[attr-defined]
+
+
+def structured_posts(page, group_url):
+    """Recover normal discussion posts from the page's own JSON payloads.
+
+    Join fragments only by the same explicit post_id and require a permalink
+    belonging to the requested group. Never combine neighboring post bodies.
+    """
+    group = urlsplit(group_url).path.strip('/').split('/')[1]
+    posts = {}
+    for raw in page.locator('script[type="application/json"]').all_text_contents():
+        try:
+            payload = json.loads(raw)
+        except (ValueError, TypeError):
+            continue
+        stack = [payload]
+        while stack:
+            node = stack.pop()
+            if isinstance(node, list):
+                stack.extend(reversed(node))
+                continue
+            if not isinstance(node, dict):
+                continue
+            stack.extend(reversed([value for value in node.values() if isinstance(value, (dict, list))]))
+            identifier = str(node.get('post_id', ''))
+            if not identifier.isdigit() or 'comment' in str(node.get('__typename', '')).casefold():
+                continue
+            record = posts.setdefault(identifier, {'texts': [], 'href': '', 'timestamp': None})
+            for key in ('url', 'permalink_url', 'wwwURL'):
+                href = node.get(key)
+                match = _POST_URL.search(href) if isinstance(href, str) else None
+                if match and match.group(1) == group and match.group(2) == identifier and 'comment_id=' not in href:
+                    record['href'] = href
+            message = node.get('message')
+            text = message.get('text') if isinstance(message, dict) else None
+            if isinstance(text, str) and text.strip():
+                record['texts'].append(text.strip())
+            timestamp = node.get('creation_time')
+            if isinstance(timestamp, (int, float)) and not isinstance(timestamp, bool):
+                record['timestamp'] = str(int(timestamp))
+    return [{'text': max(record['texts'], key=len), 'href': record['href'],
+             'timestamp': record['timestamp'], 'timeLabel': None, 'extraction': 'structured'}
+            for record in posts.values() if record['href'] and record['texts']]
 
 
 def _canonical_url(href: str) -> str:

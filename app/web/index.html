@@ -21,7 +21,7 @@ function paragraph(parent,text){const p=document.createElement('p');p.className=
 let statusBusy=false;
 function scanRow(source,scan){
   const tr=document.createElement('tr');
-  const values=[sourceLabel(source),localTime(scan.last_finished_at),scan.outcome==='disabled'?'已停用':scan.outcome==='success'?'完成':scan.outcome==='failed'?'失敗：'+scan.error:'等待首次執行',scan.elapsed_seconds!=null?scan.elapsed_seconds+' 秒':'—'];
+  const values=[sourceLabel(source),localTime(scan.last_finished_at),scan.outcome==='disabled'?'已停用':scan.outcome==='empty'?'未解析到貼文':scan.outcome==='success'?'完成':scan.outcome==='failed'?'失敗：'+scan.error:'等待首次執行',scan.elapsed_seconds!=null?scan.elapsed_seconds+' 秒':'—'];
   values.forEach((text,index)=>{
     const td=document.createElement('td');
     const link=index===0?sourceLink(source):null;

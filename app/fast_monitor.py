@@ -10,7 +10,7 @@ import logging
 import time
 from urllib.parse import quote_plus, urlsplit
 
-from app.collectors.groups.playwright_client import snapshot, post_from_article
+from app.collectors.groups.playwright_client import snapshot, post_from_article, structured_posts, has_usable_posts
 from app.collectors.marketplace.playwright_client import PlaywrightMarketplaceCollector, _matches_query
 from app.notifications.telegram import TelegramError, format_listings, send_html
 from app.products.normalizer import normalize_group, normalize_marketplace
@@ -53,7 +53,9 @@ class Scheduler:
 
     def next(self, now):
         ready = [job for job in self.jobs if job.due <= now]
-        return min(ready, key=lambda job: job.due) if ready else None
+        # Periodic notifications must not wait behind the entire startup group backlog.
+        notifications = next((job for job in ready if job.name == 'notifications' and now - job.due >= 15), None)
+        return notifications or (min(ready, key=lambda job: job.due) if ready else None)
 
     def finish(self, job, started, finished):
         # Schedule from scan start, not completion; slow jobs cannot silently
@@ -299,7 +301,11 @@ class FastMonitor:
                         controls.nth(index).click(timeout=200)
                     except Exception:
                         pass
-            for record in snapshot(page):
+            records = snapshot(page)
+            if not has_usable_posts(records):
+                records = structured_posts(page, url)
+                LOGGER.info('group_structured_fallback url=%s records=%d', url, len(records))
+            for record in records:
                 post = post_from_article(record['text'], record['href'], timestamp=record['timestamp'],
                     time_label=record['timeLabel'], group_id=urlsplit(url).path.strip('/').split('/')[1])
                 if post and post.source_id not in seen:
@@ -320,6 +326,7 @@ class FastMonitor:
         else:
             self.zero_scans[url] = 0
         LOGGER.info('scan source=group url=%s posts=%d sort=%s', url, len(seen), 'plain_unconfirmed' if plain else 'chronological_requested')
+        return len(seen)
 
     def save(self, listing):
         result = self.repository.save(listing)
@@ -429,7 +436,9 @@ class FastMonitor:
                 elif job.name == 'notifications':
                     self.notifications()
                 else:
-                    self.group(job.name)
+                    count = self.group(job.name)
+                    if count == 0:
+                        outcome = 'empty'
                 failures[job.name] = 0
             except Exception as error:
                 outcome = 'failed'

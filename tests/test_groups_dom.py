@@ -136,3 +136,30 @@ def test_commerce_title_and_author_body_both_used_for_filtering(page):
 def test_comment_permalink_cannot_be_saved_as_post(page):
     page.set_content('''<div role="article"><a href="https://www.facebook.com/groups/123/posts/456/?comment_id=999">1小時前</a><div>留言</div></div>''')
     assert snapshot(page)[0]['href'] == ''
+
+
+def test_structured_discussion_posts_join_only_same_post_id(page):
+    import json
+    from app.collectors.groups.playwright_client import structured_posts
+    payload = {'data': [
+        {'post_id': '456', 'message': {'text': '售SOGO禮券 92折'}, 'creation_time': 1700000000},
+        {'post_id': '456', 'url': 'https://www.facebook.com/groups/123/permalink/456/'},
+        {'post_id': '789', 'message': {'text': '其他商品'}, 'url': 'https://www.facebook.com/groups/123/posts/789/'},
+        {'post_id': '999', 'message': {'text': '其他社團'}, 'url': 'https://www.facebook.com/groups/other/posts/999/'},
+        {'__typename': 'Comment', 'post_id': '456', 'message': {'text': '不應套用的留言'}},
+        {'post_id': '321', 'message': {'text': '沒有連結的內容'}},
+    ]}
+    page.set_content('<script type="application/json">'+json.dumps(payload)+'</script>')
+    records = structured_posts(page, 'https://www.facebook.com/groups/123/')
+    assert len(records) == 2
+    assert records[0]['text'] == '售SOGO禮券 92折'
+    assert records[0]['timestamp'] == '1700000000'
+    assert records[1]['text'] == '其他商品'
+    assert all(post_from_article(r['text'],r['href']) for r in records)
+
+
+def test_structured_posts_handle_invalid_json_and_keep_alias_links(page):
+    from app.collectors.groups.playwright_client import structured_posts
+    page.set_content('''<script type="application/json">not json</script>
+    <script type="application/json">{"post_id":"456","url":"https://www.facebook.com/groups/billseasy/permalink/456/","message":{"text":"售禮券92折"}}</script>''')
+    assert structured_posts(page,'https://www.facebook.com/groups/billseasy/')[0]['text']=='售禮券92折'
