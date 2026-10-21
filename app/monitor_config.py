@@ -49,7 +49,7 @@ def validate(data: object) -> dict:
             raise ValueError('價格須為 1–100,000,000 元的整數')
         kind = product.get('type', 'general')
         source = product.get('source', 'both')
-        uncertain = product.get('notify_uncertain', False)
+        uncertain = product.get('notify_uncertain', kind == 'voucher')
         if kind not in ('phone', 'voucher', 'general') or source not in ('both', 'group', 'marketplace') or type(uncertain) is not bool:
             raise ValueError('商品類型、來源或待確認通知設定不正確')
         clean_products.append({'keyword': keyword.strip(), 'max_price': price, 'type': kind, 'source': source, 'notify_uncertain': uncertain})

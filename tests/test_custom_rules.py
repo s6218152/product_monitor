@@ -86,3 +86,9 @@ def test_disabled_marketplace_notifications_leave_groups_available(tmp_path, mon
         assert len(sent)==1
         assert repo.get('group','group')['notified_at'] is not None
         assert repo.get('marketplace','market')['notified_at'] is None
+
+
+def test_voucher_defaults_to_uncertain_notifications():
+    value=configure()
+    assert value['products'][0]['notify_uncertain'] is True
+    assert assess_custom('售禮券 面額1000',1000,source='group').status=='pending'
