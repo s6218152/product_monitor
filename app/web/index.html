@@ -21,7 +21,7 @@ function paragraph(parent,text){const p=document.createElement('p');p.className=
 let statusBusy=false;
 function scanRow(source,scan){
   const tr=document.createElement('tr');
-  const values=[sourceLabel(source),localTime(scan.last_finished_at),scan.outcome==='disabled'?'已停用':scan.outcome==='empty'?'未解析到貼文':scan.outcome==='success'?'完成':scan.outcome==='failed'?'失敗：'+scan.error:'等待首次執行',scan.elapsed_seconds!=null?scan.elapsed_seconds+' 秒':'—'];
+  const values=[sourceLabel(source),localTime(scan.last_finished_at),scan.outcome==='auth_required'?'需重新登入':scan.outcome==='disabled'?'已停用':scan.outcome==='empty'?'未解析到貼文':scan.outcome==='success'?'完成':scan.outcome==='failed'?'失敗：'+scan.error:'等待首次執行',scan.elapsed_seconds!=null?scan.elapsed_seconds+' 秒':'—'];
   values.forEach((text,index)=>{
     const td=document.createElement('td');
     const link=index===0?sourceLink(source):null;
@@ -39,7 +39,7 @@ async function refreshStatus(){
     autoGroupNames=data.group_names||{};
     if(data.rules?.groups)savedGroups=data.rules.groups;
     for(const row of $('#groups').children){const name=row.querySelector('[name=name]'),url=row.querySelector('[name=url]');if(name&&url)name.placeholder=autoGroupNames[groupKey(url.value)]||'等待讀取名稱';}
-    const labels={running:'● 監控執行中',starting:'◷ 正在啟動',stopped:'○ 監控已停止',stale:'⚠ 回報逾時或程序已離線',unknown:'○ 尚無監控狀態'};
+    const labels={auth_required:'⚠ Facebook 需要重新登入，監控暫停',running:'● 監控執行中',starting:'◷ 正在啟動',stopped:'○ 監控已停止',stale:'⚠ 回報逾時或程序已離線',unknown:'○ 尚無監控狀態'};
     $('#runtime-summary').textContent=labels[data.state]||'狀態未知';
     $('#runtime-meta').textContent=data.message||`啟動：${localTime(data.started_at)} · 最後回報：${localTime(data.heartbeat_at)} · ${data.current_job?'目前工作：'+sourceLabel(data.current_job):'目前無執行中的工作'}`;
     const rules=$('#active-rules');rules.replaceChildren();

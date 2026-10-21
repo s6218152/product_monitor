@@ -57,7 +57,7 @@ class MonitorStatus:
             self.write()
 
     def begin(self, source):
-        self.data.update(state='running', current_job=source)
+        self.data.update(state='auth_required' if self.data.get('facebook_auth_required') else 'running', current_job=source)
         self.write()
 
     def finish(self, source, outcome, elapsed, error=None):

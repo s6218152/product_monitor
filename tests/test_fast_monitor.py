@@ -322,3 +322,32 @@ def test_notifications_are_not_starved_by_startup_groups():
     job = scheduler.next(16)
     scheduler.finish(job, 16, 17)
     assert scheduler.next(17).name == 'marketplace'
+
+
+def test_login_loss_pauses_all_sources_and_alerts_once_even_on_retry(tmp_path):
+    from app.fast_monitor import FacebookLoginRequired
+    from app.monitor_status import MonitorStatus
+    monitor=bare_monitor(None)
+    now=[0];alerts=[];attempts=[]
+    monitor.status_reporter=MonitorStatus(SimpleNamespace(facebook_group_urls=('a','b')),Scheduler(('a','b')))
+    def fail(**kwargs):
+        attempts.append(now[0]);now[0]+=1
+        raise FacebookLoginRequired('Facebook 登入失效')
+    monitor.marketplace=fail
+    monitor.group=lambda url:__import__('pytest').fail('Groups should be paused')
+    monitor.notifications=lambda:now.__setitem__(0,now[0]+1)
+    monitor.alert=lambda *args:alerts.append(args)
+    scheduler=Scheduler(('a','b'))
+    monitor.run(scheduler,clock=lambda:now[0],sleep=lambda value:now.__setitem__(0,now[0]+value),duration=620)
+    assert len(alerts)==1
+    assert len(attempts)==3
+    assert all(b-a>=300 for a,b in zip(attempts,attempts[1:]))
+    assert monitor.status_reporter.data['state']=='auth_required'
+    assert monitor.status_reporter.data['scans']['a']['outcome']=='auth_required'
+
+
+def test_missing_login_cookie_detected_even_on_public_group_page():
+    from app.fast_monitor import FacebookLoginRequired
+    import pytest
+    page=SimpleNamespace(url='https://www.facebook.com/groups/public/',context=SimpleNamespace(cookies=lambda url:[]))
+    with pytest.raises(FacebookLoginRequired):FastMonitor.check_login(page)

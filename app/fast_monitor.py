@@ -18,6 +18,10 @@ from app.products.normalizer import normalize_group, normalize_marketplace
 LOGGER = logging.getLogger(__name__)
 
 
+class FacebookLoginRequired(RuntimeError):
+    """One shared browser session requires the owner's interactive login."""
+
+
 class BrowserRecoveryNeeded(RuntimeError):
     """The browser context cannot create a usable replacement page."""
 
@@ -136,8 +140,10 @@ class FastMonitor:
 
     @staticmethod
     def check_login(page):
-        if 'login' in page.url or page.locator('input[name="email"]').count():
-            raise RuntimeError('Facebook login expired; run marketplace-login')
+        context = getattr(page, 'context', None)
+        missing_cookie = context is not None and not any(cookie['name'] == 'c_user' for cookie in context.cookies('https://www.facebook.com'))
+        if missing_cookie or 'login' in page.url or page.locator('input[name="email"]').count():
+            raise FacebookLoginRequired('Facebook 登入已失效，請在 VM 專用瀏覽器重新登入')
 
     def enqueue(self, item, *, refresh=False):
         if item.source_id in self.queued:
@@ -377,6 +383,9 @@ class FastMonitor:
         failures = {}
         reporter = getattr(self, 'status_reporter', None)
         config = None
+        auth_retry_at = 0
+        auth_required = False
+        auth_alerted = False
         next_config_check = 0
         while clock() < end and not should_stop():
             if clock() >= next_config_check:
@@ -408,6 +417,10 @@ class FastMonitor:
                         scheduled.due = max(scheduled.due, now + .5)
             if reporter:
                 reporter.data['marketplace_enabled'] = not disabled
+            if auth_required and now < auth_retry_at:
+                for scheduled in scheduler.jobs:
+                    if scheduled.name != 'notifications':
+                        scheduled.due = max(scheduled.due, auth_retry_at)
             job = scheduler.next(now)
             if job is None:
                 sleep(0.5)
@@ -439,6 +452,11 @@ class FastMonitor:
                     count = self.group(job.name)
                     if count == 0:
                         outcome = 'empty'
+                if job.name != 'notifications' and auth_required:
+                    auth_required = False
+                    auth_alerted = False
+                    if reporter:
+                        reporter.data.update(facebook_auth_required=False, state='running', message='Facebook 登入已恢復')
                 failures[job.name] = 0
             except Exception as error:
                 outcome = 'failed'
@@ -446,7 +464,20 @@ class FastMonitor:
                 if isinstance(error, BrowserRecoveryNeeded):
                     raise
                 failures[job.name] = failures.get(job.name, 0) + 1
-                LOGGER.warning('scan_failed source=%s error_type=%s', job.name, type(error).__name__)
+                LOGGER.warning('scan_failed source=%s error_type=%s error=%s', job.name, type(error).__name__, str(error)[:500])
+                if isinstance(error, FacebookLoginRequired):
+                    outcome = 'auth_required'
+                    auth_required = True
+                    auth_retry_at = clock() + 300
+                    if reporter:
+                        reporter.data.update(facebook_auth_required=True, state='auth_required', message=str(error))
+                        for name, scan in reporter.data['scans'].items():
+                            if name != 'notifications':
+                                scan.update(outcome='auth_required', error='FacebookLoginRequired')
+                    if not auth_alerted:
+                        self.alert('facebook_login_required', 'Facebook 登入已失效，所有群組暫停掃描。請在 VM 專用瀏覽器重新登入；每 5 分鐘確認一次，不再逐群組重複告警。')
+                        auth_alerted = True
+                    continue
                 message = str(error)
                 closed = type(error).__name__ == 'TargetClosedError' or 'Page crashed' in message or 'Target crashed' in message
                 if page_name and (closed or (type(error).__name__ == 'TimeoutError' and failures[job.name] >= 2)):
