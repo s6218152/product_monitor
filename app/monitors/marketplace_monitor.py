@@ -27,7 +27,10 @@ class MarketplaceMonitor:
         self._repository = repository
 
     def run(self) -> MonitorResult:
-        from app.monitor_config import marketplace_query
+        from app.monitor_config import marketplace_query, read_config
+        config = read_config()
+        if config and not config['marketplace_enabled']:
+            return MonitorResult(found=0, new=0)
         listings = [normalize_marketplace(item) for item in self._collector.search(marketplace_query())]
         results = self._repository.save_many(listings)
         reasons = Counter(result.rejection_reason or "matched" for result in results)

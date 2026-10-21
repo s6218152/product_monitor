@@ -10,6 +10,7 @@ from app.collectors.groups.playwright_client import PlaywrightGroupCollector
 from app.collectors.marketplace.client import FixtureMarketplaceCollector
 from app.collectors.marketplace.playwright_client import PlaywrightMarketplaceCollector
 from app.config import load_settings
+from app.monitor_config import read_config
 from app.database.repository import ListingRepository
 from app.monitors.group_monitor import GroupMonitor
 from app.monitors.marketplace_monitor import MarketplaceMonitor
@@ -67,7 +68,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.command == "telegram":
                 matches = repository.list_recent(
                     args.limit,
-                    TARGET_LOCATIONS,
+                    () if (read_config() or {}).get("products") else TARGET_LOCATIONS,
                     only_unnotified=args.send,
                     only_eligible=True,
                 )

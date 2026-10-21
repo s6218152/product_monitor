@@ -62,7 +62,14 @@ class ListingRepository:
                 ))
             for listing in listings:
                 text = f"{listing.title} {listing.description or ''}"
-                reason = rejection_reason(text, listing.price, listing.location)
+                from app.products.custom_rules import assess_custom
+                from dataclasses import replace
+                assessment = assess_custom(text, listing.price, listing.location, listing.source)
+                if assessment is not None:
+                    listing = replace(listing, price=assessment.price)
+                    reason = assessment.reason if assessment.status == 'rejected' else None
+                else:
+                    reason = rejection_reason(text, listing.price, listing.location)
                 pair = (listing.source, listing.source_id)
                 posted_at = listing.created_at.isoformat() if listing.created_at else None
                 self._connection.execute(
@@ -86,6 +93,9 @@ class ListingRepository:
                      listing.first_seen_at.isoformat(), posted_at, parse_storage_gb(text),
                      int(reason is None), observed_at),
                 )
+                self._connection.execute('UPDATE listings SET match_status=?, match_note=? WHERE source=? AND source_id=?',
+                    (assessment.status if assessment else ('matched' if reason is None else 'rejected'),
+                     assessment.reason if assessment else reason, listing.source, listing.source_id))
                 results.append(SaveResult(pair not in existing, reason is None, reason))
                 existing.add(pair)
         return results
@@ -120,12 +130,15 @@ class ListingRepository:
 
     def list_recent(
         self, limit: int | None = 10, locations: tuple[str, ...] = (), *,
-        only_unnotified: bool = False, only_eligible: bool = False,
+        only_unnotified: bool = False, only_eligible: bool = False, exclude_sources: tuple[str, ...] = (),
     ) -> list[sqlite3.Row]:
         if limit is not None and limit < 1:
             raise ValueError("limit must be at least 1")
         filters: list[str] = []
         parameters: list[object] = []
+        if exclude_sources:
+            filters.append(f"source NOT IN ({','.join('?' for _ in exclude_sources)})")
+            parameters.extend(exclude_sources)
         if only_eligible:
             filters.append("eligible = 1")
         if locations:
@@ -134,7 +147,7 @@ class ListingRepository:
         if only_unnotified:
             now = datetime.now(timezone.utc).isoformat()
             filters.extend((
-                "(notified_at IS NULL OR price < notified_price)",
+                "(notified_at IS NULL OR price < notified_price OR (notified_price IS NULL AND price IS NOT NULL))",
                 "(notification_next_attempt_at IS NULL OR notification_next_attempt_at <= ?)",
                 "NOT EXISTS (SELECT 1 FROM notification_state WHERE id=1 AND next_attempt_at > ?)",
             ))
@@ -145,7 +158,7 @@ class ListingRepository:
             parameters.append(limit)
         return list(self._connection.execute(
             f"""SELECT id, title, description, price, currency, location, url,
-                       last_seen_at, notified_at, notified_price, storage_gb, eligible, observed_at, first_seen_at
+                       last_seen_at, notified_at, notified_price, storage_gb, eligible, observed_at, first_seen_at, match_status, match_note
                 FROM listings WHERE {where}
                 ORDER BY last_seen_at DESC, id DESC {limit_clause}""", parameters,
         ))

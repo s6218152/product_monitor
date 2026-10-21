@@ -13,6 +13,9 @@ def config_path() -> Path:
 def validate(data: object) -> dict:
     if not isinstance(data, dict):
         raise ValueError('設定格式不正確')
+    enabled = data.get('marketplace_enabled', True)
+    if type(enabled) is not bool:
+        raise ValueError('Marketplace 啟用狀態須為布林值')
     query = data.get('marketplace_query', 'iPhone 17 Pro Max')
     if not isinstance(query, str) or not query.strip() or len(query) > 120:
         raise ValueError('Marketplace 搜尋關鍵字須為 1–120 字')
@@ -44,8 +47,13 @@ def validate(data: object) -> dict:
             raise ValueError('商品關鍵字須為 1–120 字')
         if type(price) is not int or not 0 < price <= 100000000:
             raise ValueError('價格須為 1–100,000,000 元的整數')
-        clean_products.append({'keyword': keyword.strip(), 'max_price': price})
-    return {'groups': clean_groups, 'products': clean_products, 'marketplace_query': query.strip()}
+        kind = product.get('type', 'general')
+        source = product.get('source', 'both')
+        uncertain = product.get('notify_uncertain', False)
+        if kind not in ('phone', 'voucher', 'general') or source not in ('both', 'group', 'marketplace') or type(uncertain) is not bool:
+            raise ValueError('商品類型、來源或待確認通知設定不正確')
+        clean_products.append({'keyword': keyword.strip(), 'max_price': price, 'type': kind, 'source': source, 'notify_uncertain': uncertain})
+    return {'groups': clean_groups, 'products': clean_products, 'marketplace_query': query.strip(), 'marketplace_enabled': enabled}
 
 
 def read_config() -> dict | None:

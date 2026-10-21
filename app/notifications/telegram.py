@@ -80,7 +80,9 @@ def _format_storage(title: str, description: str | None) -> str:
 def format_listings(listings: list[Row]) -> str:
     if not listings:
         return "🔍 <b>目前沒有商品資料</b>"
-    blocks = ["🔔 <b>iPhone 17 Pro Max 商品</b>"]
+    from app.monitor_config import read_config
+    config = read_config()
+    blocks = ["🔔 <b>商品監控通知</b>" if config and config["products"] else "🔔 <b>iPhone 17 Pro Max 商品</b>"]
     for listing in listings:
         url = escape(listing["url"], quote=True)
         price = (
@@ -90,7 +92,7 @@ def format_listings(listings: list[Row]) -> str:
         )
         blocks.append(
             "\n".join((
-                "📉 降價通知" if "notified_price" in listing.keys() and listing["notified_price"] is not None and listing["price"] < listing["notified_price"] else "🆕 商品通知",
+                "📉 降價通知" if "notified_price" in listing.keys() and listing["notified_price"] is not None and listing["price"] is not None and listing["price"] < listing["notified_price"] else "🆕 商品通知",
                 f"📱 容量：<b>{_format_storage(listing['title'], listing['description'])}</b>",
                 f"💰 {price}",
                 f"📍 地區：{escape(listing['location'] or '未提供')}",
@@ -98,6 +100,15 @@ def format_listings(listings: list[Row]) -> str:
                 f'🔗 商品連結：<a href="{url}">{url}</a>',
             ))
         )
+        if "match_status" in listing.keys() and listing["match_status"] == 'pending':
+            blocks[-1] = '⚠️ 待確認：' + escape(listing['match_note'] or '資訊不足') + '\n' + blocks[-1]
+        if config and config['products']:
+            from app.products.matcher import KeywordMatcher
+            phone = any(p.get('type') == 'phone' and KeywordMatcher((p['keyword'],)).matches(f"{listing['title']} {listing['description'] or ''}") for p in config['products'])
+            if not phone:
+                blocks[-1] = '\n'.join(line for line in blocks[-1].split('\n') if not line.startswith('📱 容量：'))
+            blocks[-1] += '\n商品：' + escape(listing['title'])
+            blocks[-1] += '\n原文：\n' + escape(listing['description'] or '未提供')
     return "\n\n".join(blocks)
 
 

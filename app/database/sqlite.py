@@ -28,6 +28,8 @@ CREATE TABLE IF NOT EXISTS listings (
     notified_price INTEGER,
     storage_gb INTEGER,
     eligible INTEGER NOT NULL DEFAULT 0,
+    match_status TEXT,
+    match_note TEXT,
     observed_at TEXT,
     notification_attempts INTEGER NOT NULL DEFAULT 0,
     notification_error TEXT,
@@ -59,6 +61,7 @@ def initialize(connection: sqlite3.Connection) -> None:
             connection.execute(f"INSERT INTO listings ({names}) SELECT {names} FROM listings_legacy")
             connection.execute("DROP TABLE listings_legacy")
         fields = (
+            ("match_status", "TEXT"), ("match_note", "TEXT"),
             ("location", "TEXT"), ("notified_at", "TEXT"), ("notified_price", "INTEGER"),
             ("storage_gb", "INTEGER"), ("eligible", "INTEGER NOT NULL DEFAULT 0"),
             ("observed_at", "TEXT"), ("notification_attempts", "INTEGER NOT NULL DEFAULT 0"),

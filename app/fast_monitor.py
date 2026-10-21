@@ -169,6 +169,10 @@ class FastMonitor:
         if reporter:
             reporter.data['marketplace_query'] = search_term
             reporter.write()
+        from app.monitor_config import read_config
+        config = read_config()
+        if config and not config['marketplace_enabled']:
+            return
         query = quote_plus(search_term)
         page.goto(f'https://www.facebook.com/marketplace/search/?query={query}&sortBy=creation_time_descend',
                   wait_until='domcontentloaded', timeout=15000)
@@ -205,6 +209,10 @@ class FastMonitor:
         LOGGER.info('scan source=marketplace mode=%s cards=%d queue=%d', 'catchup' if catchup else 'fast', len(found), len(self.detail_queue))
 
     def details(self):
+        from app.monitor_config import read_config
+        config = read_config()
+        if config and not config['marketplace_enabled']:
+            return
         from dataclasses import replace
         if not self.detail_queue:
             from app.collectors.marketplace.models import RawMarketplaceListing
@@ -332,7 +340,10 @@ class FastMonitor:
             LOGGER.warning('monitor_alert_delivery_failed key=%s', key)
 
     def notifications(self, *, limit=1, listing_id=None):
-        rows = self.repository.list_recent(None if listing_id else limit, only_unnotified=True, only_eligible=True)
+        from app.monitor_config import read_config
+        config = read_config()
+        excluded = ('marketplace',) if config and not config['marketplace_enabled'] else ()
+        rows = self.repository.list_recent(None if listing_id else limit, only_unnotified=True, only_eligible=True, exclude_sources=excluded)
         if listing_id is not None:
             rows = [row for row in rows if row['id'] == listing_id]
         for row in rows:
@@ -355,6 +366,7 @@ class FastMonitor:
         end = clock() + duration
         failures = {}
         reporter = getattr(self, 'status_reporter', None)
+        config = None
         next_config_check = 0
         while clock() < end and not should_stop():
             if clock() >= next_config_check:
@@ -379,6 +391,13 @@ class FastMonitor:
             if reporter:
                 reporter.pulse()
             now = clock()
+            disabled = config is not None and not config['marketplace_enabled']
+            if disabled:
+                for scheduled in scheduler.jobs:
+                    if scheduled.name in ('marketplace', 'catchup', 'details'):
+                        scheduled.due = max(scheduled.due, now + .5)
+            if reporter:
+                reporter.data['marketplace_enabled'] = not disabled
             job = scheduler.next(now)
             if job is None:
                 sleep(0.5)
