@@ -76,7 +76,9 @@ def test_failed_send_is_retained_for_retry(tmp_path, monkeypatch):
         assert row['notification_attempts'] == 1
 
 
-def test_fast_scan_requests_newest_and_queues_without_detail_navigation(tmp_path, monkeypatch):
+@__import__('pytest').mark.parametrize('search_term', ['iPhone 17 Pro Max', 'Sony A7'])
+def test_fast_scan_requests_newest_and_queues_without_detail_navigation(tmp_path, monkeypatch, search_term):
+    monkeypatch.setattr('app.monitor_config.marketplace_query', lambda: search_term)
     class Page:
         url = 'https://www.facebook.com/marketplace/search/'
         mouse = SimpleNamespace(wheel=lambda *a: None)
@@ -92,12 +94,14 @@ def test_fast_scan_requests_newest_and_queues_without_detail_navigation(tmp_path
         monitor = bare_monitor(repo)
         monitor.search_page = Page()
         monitor.catchup_scrolls = 6
-        item = RawMarketplaceListing(source_id='new', title='iPhone 17 Pro Max 256G', url='https://test')
+        item = RawMarketplaceListing(source_id='new', title=search_term+' 256G', url='https://test')
         def collect(page, found):
             found[item.source_id] = item
         monkeypatch.setattr('app.fast_monitor.PlaywrightMarketplaceCollector._collect_cards', collect)
         monitor.marketplace()
         assert 'sortBy=creation_time_descend' in monitor.search_page.urls[0]
+        from urllib.parse import quote_plus
+        assert 'query='+quote_plus(search_term) in monitor.search_page.urls[0]
         assert len(monitor.search_page.urls) == 1
         assert len(monitor.detail_queue) == 1
         assert repo.count() == 0  # Not validated yet: never notify from the card alone.

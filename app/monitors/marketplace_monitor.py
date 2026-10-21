@@ -27,7 +27,8 @@ class MarketplaceMonitor:
         self._repository = repository
 
     def run(self) -> MonitorResult:
-        listings = [normalize_marketplace(item) for item in self._collector.search("iPhone 17 Pro Max")]
+        from app.monitor_config import marketplace_query
+        listings = [normalize_marketplace(item) for item in self._collector.search(marketplace_query())]
         results = self._repository.save_many(listings)
         reasons = Counter(result.rejection_reason or "matched" for result in results)
         logging.getLogger(__name__).info("Marketplace filter counts: %s", dict(reasons))

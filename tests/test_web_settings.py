@@ -54,3 +54,26 @@ def test_http_save_reload_and_cross_origin(tmp_path, monkeypatch):
         server.shutdown()
         server.server_close()
         thread.join()
+
+
+def test_marketplace_query_validation_and_backward_compatibility(tmp_path, monkeypatch):
+    from app.monitor_config import marketplace_query
+    monkeypatch.setenv('MONITOR_CONFIG_PATH', str(tmp_path/'settings.json'))
+    value = {'groups': [{'url': 'https://www.facebook.com/groups/123/'}],
+             'products': [{'keyword': '相機', 'max_price': 10000}]}
+    assert marketplace_query() == 'iPhone 17 Pro Max'
+    assert validate(value)['marketplace_query'] == 'iPhone 17 Pro Max'
+    save_config({**value, 'marketplace_query': ' Sony A7 '})
+    assert marketplace_query() == 'Sony A7'
+    for query in ('', '   ', None, 123, 'x'*121):
+        with pytest.raises(ValueError):
+            validate({**value, 'marketplace_query': query})
+
+
+def test_query_only_change_preserves_default_filters(tmp_path, monkeypatch):
+    monkeypatch.setenv('MONITOR_CONFIG_PATH', str(tmp_path/'settings.json'))
+    save_config({'groups': [{'url': 'https://www.facebook.com/groups/123/'}],
+                 'products': [], 'marketplace_query': 'iPhone 17'})
+    assert rejection_reason('iPhone 17 Pro Max 256GB', 30000, '新竹市') is None
+    assert rejection_reason('iPhone 17 Pro Max 256GB', 30000, '臺北市') == 'location'
+    assert rejection_reason('Sony A7', 1000, '新竹市') == 'model'

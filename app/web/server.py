@@ -28,7 +28,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == '/api/settings':
             try:
                 settings = load_settings()
-                value = read_config() or {'groups': [{'name': '', 'url': url} for url in settings.facebook_group_urls], 'products': []}
+                value = read_config() or {'groups': [{'name': '', 'url': url} for url in settings.facebook_group_urls], 'products': [], 'marketplace_query': 'iPhone 17 Pro Max'}
                 from app.group_names import read_names, group_key
                 names = read_names()
                 value = {**value, 'groups': [{**group, 'auto_name': names.get(group_key(group['url']), '')} for group in value['groups']]}

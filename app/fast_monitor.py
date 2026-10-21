@@ -163,7 +163,13 @@ class FastMonitor:
 
     def marketplace(self, *, catchup=False):
         page = self.search_page
-        query = quote_plus('iPhone 17 Pro Max')
+        from app.monitor_config import marketplace_query
+        search_term = marketplace_query()
+        reporter = getattr(self, 'status_reporter', None)
+        if reporter:
+            reporter.data['marketplace_query'] = search_term
+            reporter.write()
+        query = quote_plus(search_term)
         page.goto(f'https://www.facebook.com/marketplace/search/?query={query}&sortBy=creation_time_descend',
                   wait_until='domcontentloaded', timeout=15000)
         self.check_login(page)
@@ -187,13 +193,13 @@ class FastMonitor:
             page.mouse.wheel(0, 1800)
             page.wait_for_timeout(700)
         for item in reversed(list(found.values())):
-            if _matches_query(item, 'iPhone 17 Pro Max'):
+            if _matches_query(item, search_term):
                 self.enqueue(item)
         if catchup:
             # Refresh known items after discovery work. A burst of new items
             # must not be queued behind every previously seen listing.
             for item in found.values():
-                if _matches_query(item, 'iPhone 17 Pro Max'):
+                if _matches_query(item, search_term):
                     self.enqueue(item, refresh=True)
             self.catchup_scrolls = 6 if self.catchup_scrolls >= 18 else self.catchup_scrolls + 3
         LOGGER.info('scan source=marketplace mode=%s cards=%d queue=%d', 'catchup' if catchup else 'fast', len(found), len(self.detail_queue))

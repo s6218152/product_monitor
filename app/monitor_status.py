@@ -102,6 +102,8 @@ def read_status():
         data['group_names'] = read_names()
         data['heartbeat_age_seconds'] = round(age)
         configured = read_config()
+        desired_query = configured['marketplace_query'] if configured else 'iPhone 17 Pro Max'
+        data['marketplace_pending'] = desired_query != data.get('marketplace_query')
         data['pending_changes'] = configured != data.get('rules') or (
             configured is not None and [g['url'] for g in configured['groups']] != data['groups'])
         return data

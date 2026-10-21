@@ -22,7 +22,7 @@ def rejection_reason(text: str, price: int | None, location: str | None) -> str 
     text = normalize_text(text)
     from app.monitor_config import read_config
     custom = read_config()
-    if custom is not None:
+    if custom is not None and custom['products']:
         for product in custom["products"]:
             if KeywordMatcher((product["keyword"],)).matches(text):
                 if price is not None and 0 < price <= product["max_price"]:

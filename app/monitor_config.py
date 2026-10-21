@@ -13,9 +13,12 @@ def config_path() -> Path:
 def validate(data: object) -> dict:
     if not isinstance(data, dict):
         raise ValueError('設定格式不正確')
+    query = data.get('marketplace_query', 'iPhone 17 Pro Max')
+    if not isinstance(query, str) or not query.strip() or len(query) > 120:
+        raise ValueError('Marketplace 搜尋關鍵字須為 1–120 字')
     groups, products = data.get('groups'), data.get('products')
-    if not isinstance(groups, list) or not isinstance(products, list) or not groups or not products:
-        raise ValueError('請至少新增一個 Group 和一項商品')
+    if not isinstance(groups, list) or not isinstance(products, list) or not groups:
+        raise ValueError('請至少新增一個 Group，商品須為清單')
     if len(groups) > 100 or len(products) > 100:
         raise ValueError('Group 與商品各最多 100 項')
     clean_groups = []
@@ -42,7 +45,7 @@ def validate(data: object) -> dict:
         if type(price) is not int or not 0 < price <= 100000000:
             raise ValueError('價格須為 1–100,000,000 元的整數')
         clean_products.append({'keyword': keyword.strip(), 'max_price': price})
-    return {'groups': clean_groups, 'products': clean_products}
+    return {'groups': clean_groups, 'products': clean_products, 'marketplace_query': query.strip()}
 
 
 def read_config() -> dict | None:
@@ -58,3 +61,8 @@ def save_config(data: object) -> dict:
     temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
     temporary.replace(path)
     return value
+
+
+def marketplace_query():
+    config = read_config()
+    return config['marketplace_query'] if config else 'iPhone 17 Pro Max'
