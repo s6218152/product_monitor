@@ -10,6 +10,34 @@ from app.config import load_settings
 from app.products.target_filter import rejection_reason
 
 
+def test_idle_connection_does_not_block_dashboard():
+    import socket
+    from threading import Event
+
+    accepted = Event()
+
+    class ShortTimeoutHandler(Handler):
+        timeout = 0.1
+
+        def setup(self):
+            super().setup()
+            accepted.set()
+
+    server = HTTPServer(('127.0.0.1', 0), ShortTimeoutHandler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with socket.create_connection(server.server_address, timeout=1):
+            assert accepted.wait(1)
+            with urlopen(f'http://127.0.0.1:{server.server_port}/', timeout=1) as response:
+                assert response.status == 200
+                assert '商品與價格' in response.read().decode()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
 def test_saved_settings_drive_groups_and_matching(tmp_path, monkeypatch):
     monkeypatch.setenv('MONITOR_CONFIG_PATH', str(tmp_path / 'settings.json'))
     save_config({'groups': [{'url': 'https://www.facebook.com/groups/123/?foo=bar'}],

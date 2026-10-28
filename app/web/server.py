@@ -9,6 +9,10 @@ from app.monitor_config import read_config, save_config
 
 
 class Handler(BaseHTTPRequestHandler):
+    # Browsers may open an idle connection before sending a request. Bound the
+    # wait so one abandoned connection cannot block this single-threaded server.
+    timeout = 5
+
     def respond(self, status, value, content_type='application/json; charset=utf-8'):
         body = value if isinstance(value, bytes) else json.dumps(value, ensure_ascii=False).encode()
         self.send_response(status)
