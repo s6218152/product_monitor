@@ -1,4 +1,5 @@
 """Fair incremental scheduling. All browser work shares one persistent context."""
+import random
 from collections import deque
 from dataclasses import dataclass
 from dataclasses import asdict
@@ -6,6 +7,7 @@ import hashlib
 import json
 from html import escape
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 import logging
 import time
 from urllib.parse import quote_plus, urlsplit
@@ -16,6 +18,14 @@ from app.notifications.telegram import TelegramError, format_listings, send_html
 from app.products.normalizer import normalize_group, normalize_marketplace
 
 LOGGER = logging.getLogger(__name__)
+TAIPEI = ZoneInfo('Asia/Taipei')
+
+
+def is_night_time() -> bool:
+    """Check if current time is night time in Taiwan (01:30 - 07:30)."""
+    now = datetime.now(TAIPEI)
+    minutes = now.hour * 60 + now.minute
+    return (1 * 60 + 30) <= minutes < (7 * 60 + 30)
 
 
 class FacebookLoginRequired(RuntimeError):
@@ -61,11 +71,19 @@ class Scheduler:
         notifications = next((job for job in ready if job.name == 'notifications' and now - job.due >= 15), None)
         return notifications or (min(ready, key=lambda job: job.due) if ready else None)
 
-    def finish(self, job, started, finished):
+    def finish(self, job, started, finished, *, jitter=True):
         # Schedule from scan start, not completion; slow jobs cannot silently
         # add their duration to every requested interval.
         job.last_finished = finished
-        job.due = max(started + job.interval, finished)
+        base_interval = job.interval
+        if jitter and job.name not in ('details', 'notifications') and is_night_time():
+            base_interval *= 3.0  # Slow down scans by 3x during late night (01:30 - 07:30)
+        # Apply +/- 20% random jitter for browser scans to prevent fixed robotic periodicity
+        if jitter and job.name not in ('details', 'notifications') and base_interval > 10:
+            actual_interval = base_interval * random.uniform(0.85, 1.25)
+        else:
+            actual_interval = base_interval
+        job.due = max(started + actual_interval, finished)
 
 
 class FastMonitor:
@@ -150,6 +168,18 @@ class FastMonitor:
     def enqueue(self, item, *, refresh=False):
         if item.source_id in self.queued:
             return
+        from app.monitor_config import read_config
+        config = read_config()
+        # Early-filter: skip opening expensive detail page if card price already exceeds all configured products
+        if config and config.get('products') and item.price is not None and item.price > 0:
+            matching_max_prices = [
+                p['max_price'] for p in config['products']
+                if p.get('source', 'both') in ('both', 'marketplace')
+            ]
+            if matching_max_prices and item.price > max(matching_max_prices):
+                LOGGER.info('card_price_exceeds_max id=%s price=%s max=%s skip_detail=true',
+                            item.source_id, item.price, max(matching_max_prices))
+                return
         task = self.repository.get_detail_task(item.source_id)
         changed = task and task['fingerprint'] != self.fingerprint(item)
         if task and not changed:
@@ -204,8 +234,8 @@ class FastMonitor:
             PlaywrightMarketplaceCollector._collect_cards(page, found)
             if time.monotonic() >= deadline:
                 break
-            page.mouse.wheel(0, 1800)
-            page.wait_for_timeout(700)
+            page.mouse.wheel(0, random.randint(1500, 2200))
+            page.wait_for_timeout(random.randint(600, 1100))
         for item in reversed(list(found.values())):
             if _matches_query(item, search_term):
                 self.enqueue(item)
@@ -215,7 +245,7 @@ class FastMonitor:
             for item in found.values():
                 if _matches_query(item, search_term):
                     self.enqueue(item, refresh=True)
-            self.catchup_scrolls = 6 if self.catchup_scrolls >= 18 else self.catchup_scrolls + 3
+            self.catchup_scrolls = 6 if self.catchup_scrolls >= 10 else self.catchup_scrolls + 2
         LOGGER.info('scan source=marketplace mode=%s cards=%d queue=%d', 'catchup' if catchup else 'fast', len(found), len(self.detail_queue))
 
     def details(self):
@@ -296,7 +326,7 @@ class FastMonitor:
         deadline = time.monotonic() + 8
         seen = set()
         for step in range(3):
-            page.wait_for_timeout(1000)
+            page.wait_for_timeout(random.randint(800, 1300))
             if step == 0:
                 from app.group_names import capture_name
                 capture_name(page, url)
@@ -321,7 +351,7 @@ class FastMonitor:
                     self.save(normalize_group(post))
             if time.monotonic() >= deadline:
                 break
-            page.mouse.wheel(0, 1800)
+            page.mouse.wheel(0, random.randint(1500, 2200))
         if not seen:
             self.zero_scans[url] = self.zero_scans.get(url, 0) + 1
             if self.zero_scans[url] >= 3:

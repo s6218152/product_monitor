@@ -25,17 +25,17 @@ def test_fair_scheduler_and_start_based_interval():
     scheduler = Scheduler(('a', 'b'), marketplace_interval=120)
     job = scheduler.next(0)
     assert job.name == 'marketplace'
-    scheduler.finish(job, 0, 30)
+    scheduler.finish(job, 0, 30, jitter=False)
     assert job.due == 120
     assert scheduler.next(30).name == 'notifications'
     job = scheduler.next(30)
-    scheduler.finish(job, 30, 31)
+    scheduler.finish(job, 30, 31, jitter=False)
     for name in ('a', 'b', 'details', 'catchup'):
         job = scheduler.next(30)
         assert job.name == name
-        scheduler.finish(job, 30, 31)
+        scheduler.finish(job, 30, 31, jitter=False)
     assert scheduler.next(120).name == 'notifications'
-    scheduler.finish(scheduler.next(120), 120, 121)
+    scheduler.finish(scheduler.next(120), 120, 121, jitter=False)
     assert scheduler.next(121).name == 'details'
 
 
