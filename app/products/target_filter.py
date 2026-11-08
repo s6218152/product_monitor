@@ -26,7 +26,7 @@ def rejection_reason(text: str, price: int | None, location: str | None) -> str 
         return custom.reason if custom.status == 'rejected' else None
     if not _MATCHER.matches(text):
         return "model"
-    if re.search(r"(?<!非)(?<!不)(?:收購|求購|徵求|出租)|(?:^|[\s【\[(])徵", text):
+    if re.search(r"(?<!非)(?<!不)(?:收購|求購|徵求|出租)|(?:^|[\s【\[(])徵|原門號(?:續約|搭配|移轉)|搭配\d{3,4}電信資費|電信\d{3,4}只要", text):
         return "wanted_or_accessory"
     subject = re.sub(r"(?:附(?:贈)?|贈送|送)[^，。;\n]{0,20}?(?:保護殼|手機殼|零件)", "", text)
     subject = re.sub(r"(?:保護殼|手機殼|零件)\s*(?:附贈|贈送|隨附)", "", subject)

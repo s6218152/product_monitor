@@ -48,6 +48,8 @@ def validate(data: object) -> dict:
         if type(price) is not int or not 0 < price <= 100000000:
             raise ValueError('價格須為 1–100,000,000 元的整數')
         kind = product.get('type', 'general')
+        if kind == 'voucher':
+            kind = 'phone'
         source = product.get('source', 'both')
         uncertain = product.get('notify_uncertain', False)
         if kind not in ('phone', 'general') or source not in ('both', 'group', 'marketplace') or type(uncertain) is not bool:

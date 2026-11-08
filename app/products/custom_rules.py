@@ -30,6 +30,9 @@ def _exclude_gift_accessories(text: str) -> str:
     return re.sub(r'(?:無|沒有|未|不曾)(?:維修|更換零件)', '', subject)
 
 
+_CARRIER_SPAM = re.compile(r'原門號(?:續約|搭配|移轉)|搭配\d{3,4}電信資費|電信\d{3,4}只要', re.I)
+
+
 def assess_custom(text, price, location=None, source=None):
     config = read_config()
     if not config or not config['products']:
@@ -39,7 +42,7 @@ def assess_custom(text, price, location=None, source=None):
                   and (source is None or p.get('source', 'both') in ('both', source))]
     if not candidates:
         return Assessment('rejected', price, 'custom_product_or_price')
-    if re.search(r'已售出|已售完|售罄|交易完成|(?<!非)(?<!不)(?:收購|求購|徵求|出租)|(?:^|[\s【\[(])徵', text):
+    if re.search(r'已售出|已售完|售罄|交易完成|(?<!非)(?<!不)(?:收購|求購|徵求|出租)|(?:^|[\s【\[(])徵', text) or _CARRIER_SPAM.search(text):
         return Assessment('rejected', price, 'wanted_or_sold')
     pending = None
     last_price = price
