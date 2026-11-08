@@ -81,6 +81,8 @@ class FastMonitor:
         self.alert_times = {}
         self.zero_scans = {}
         self.catchup_scrolls = 6
+        self.rate_limited = False
+        self.rate_limit_until = 0
 
     def attach_context(self, context):
         self.context = context
@@ -365,11 +367,17 @@ class FastMonitor:
                 continue
             try:
                 send_html(self.settings.telegram_bot_token or '', self.settings.telegram_chat_id or '', format_listings([row]), timeout=10)
+                if getattr(self, 'rate_limited', False):
+                    self.rate_limited = False
+                    self.alert('rate_limit_recovered', '✅ Telegram 限流已解除，恢復正常發送推播通知。')
             except Exception as error:
                 delay = getattr(error, 'retry_after', None) or 60
                 self.repository.mark_notification_failed(row['id'], str(error), retry_after_seconds=delay)
                 if isinstance(error, TelegramError) and error.status_code == 429:
                     self.repository.defer_notifications(delay)
+                    self.rate_limited = True
+                    self.rate_limit_until = time.monotonic() + delay
+                    self.alert('rate_limited', f'⚠️ Telegram 觸發發送限流 (429)！\n已自動暫停發送，預計延後 {delay} 秒後重試。')
                 raise
             self.repository.mark_notified(row['id'], sent_price=row['price'])
             now = datetime.now(timezone.utc)
@@ -410,6 +418,9 @@ class FastMonitor:
             if reporter:
                 reporter.pulse()
             now = clock()
+            if getattr(self, 'rate_limited', False) and now >= getattr(self, 'rate_limit_until', 0):
+                self.rate_limited = False
+                self.alert('rate_limit_recovered', '✅ Telegram 限流冷卻期已過，恢復正常推播通知。')
             disabled = config is not None and not config['marketplace_enabled']
             if disabled:
                 for scheduled in scheduler.jobs:

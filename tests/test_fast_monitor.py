@@ -52,6 +52,45 @@ def test_incremental_save_sends_before_rest_of_scan(tmp_path, monkeypatch):
         assert len(sent) == 1
 
 
+def test_telegram_rate_limit_alert_and_recovery(tmp_path, monkeypatch):
+    import pytest
+    from app.notifications.telegram import TelegramError
+    alerts = []
+    sent = []
+
+    def mock_send(*args, **kwargs):
+        text = args[2]
+        if '⚠️ 監控異常' in text or '✅' in text:
+            alerts.append(text)
+            return 1
+        if len(sent) == 0:
+            sent.append(text)
+            raise TelegramError("Too Many Requests", status_code=429, retry_after=120)
+        sent.append(text)
+        return 1
+
+    monkeypatch.setattr('app.fast_monitor.send_html', mock_send)
+    with ListingRepository(tmp_path/'db') as repo:
+        monitor = bare_monitor(repo)
+        monitor.alert_times = {}
+        listing = replace(make_listing(32000), title='iPhone 17 Pro Max 256G', location='新竹縣')
+        repo.save(listing)
+
+        # Trigger rate limit
+        with pytest.raises(TelegramError):
+            monitor.notifications(limit=1)
+        assert monitor.rate_limited is True
+        assert any('觸發發送限流 (429)' in a and '120 秒' in a for a in alerts)
+
+        # Clear next_attempt on row and state, simulate next successful delivery
+        with repo._connection:
+            repo._connection.execute("UPDATE notification_state SET next_attempt_at=NULL")
+            repo._connection.execute("UPDATE listings SET notification_next_attempt_at=NULL")
+        monitor.notifications(limit=1)
+        assert monitor.rate_limited is False
+        assert any('限流已解除' in a for a in alerts)
+
+
 def test_known_cards_skipped_and_new_cards_prioritized(tmp_path):
     with ListingRepository(tmp_path/'db') as repo:
         monitor = bare_monitor(repo)
