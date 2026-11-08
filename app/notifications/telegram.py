@@ -74,13 +74,15 @@ def _format_time(value: str | None) -> str:
 
 
 def _format_storage(title: str, description: str | None) -> str:
-    return format_storage_gb(f"{title} {description or ''}")
+    from app.products.custom_rules import listing_text
+    return format_storage_gb(listing_text(title, description))
 
 
 def format_listings(listings: list[Row]) -> str:
     if not listings:
         return "🔍 <b>目前沒有商品資料</b>"
     from app.monitor_config import read_config
+    from app.products.custom_rules import listing_text
     config = read_config()
     blocks = ["🔔 <b>商品監控通知</b>" if config and config["products"] else "🔔 <b>iPhone 17 Pro Max 商品</b>"]
     for listing in listings:
@@ -90,27 +92,33 @@ def format_listings(listings: list[Row]) -> str:
             if listing["price"] is not None
             else "價格未提供"
         )
-        blocks.append(
-            "\n".join((
-                "📉 降價通知" if "notified_price" in listing.keys() and listing["notified_price"] is not None and listing["price"] is not None and listing["price"] < listing["notified_price"] else "🆕 商品通知",
-                f"📱 容量：<b>{_format_storage(listing['title'], listing['description'])}</b>",
-                f"💰 {price}",
-                f"📍 地區：{escape(listing['location'] or '未提供')}",
-                f"🕒 上架：{_format_time(listing['last_seen_at'])}",
-                f'🔗 商品連結：<a href="{url}">{url}</a>',
-            ))
-        )
+        lines = [
+            "📉 降價通知" if "notified_price" in listing.keys() and listing["notified_price"] is not None and listing["price"] is not None and listing["price"] < listing["notified_price"] else "🆕 商品通知",
+            f"📱 容量：<b>{_format_storage(listing['title'], listing['description'])}</b>",
+            f"💰 {price}",
+            f"📍 地區：{escape(listing['location'] or '未提供')}",
+            f"🕒 上架：{_format_time(listing['last_seen_at'])}",
+            f'🔗 商品連結：<a href="{url}">{url}</a>',
+        ]
         if "match_status" in listing.keys() and listing["match_status"] == 'pending':
-            blocks[-1] = '⚠️ 待確認：' + escape(listing['match_note'] or '資訊不足') + '\n' + blocks[-1]
+            lines.insert(0, '⚠️ 待確認：' + escape(listing['match_note'] or '資訊不足'))
         if 'match_note' in listing.keys() and listing['match_note'] and listing['match_status'] == 'matched':
-            blocks[-1] += '\n判斷：' + escape(listing['match_note'])
+            lines.append('判斷：' + escape(listing['match_note']))
         if config and config['products']:
             from app.products.matcher import KeywordMatcher
-            phone = any(p.get('type') == 'phone' and KeywordMatcher((p['keyword'],)).matches(f"{listing['title']} {listing['description'] or ''}") for p in config['products'])
+            content = listing_text(listing['title'], listing['description'])
+            phone = any(p.get('type') == 'phone' and KeywordMatcher((p['keyword'],)).matches(content) for p in config['products'])
             if not phone:
-                blocks[-1] = '\n'.join(line for line in blocks[-1].split('\n') if not line.startswith('📱 容量：'))
-            blocks[-1] += '\n商品：' + escape(listing['title'])
-            blocks[-1] += '\n原文：\n' + escape(listing['description'] or '未提供')
+                lines = [line for line in lines if not line.startswith('📱 容量：')]
+            title_str = (listing['title'] or '').strip()
+            desc_str = (listing['description'] or '').strip()
+            if title_str and not desc_str.startswith(title_str):
+                lines.append('商品：' + escape(title_str))
+            if desc_str and desc_str != title_str:
+                lines.append('原文：\n' + escape(desc_str))
+            elif not desc_str and not title_str:
+                lines.append('原文：\n未提供')
+        blocks.append("\n".join(lines))
     return "\n\n".join(blocks)
 
 

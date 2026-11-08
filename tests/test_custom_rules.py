@@ -1,8 +1,8 @@
 from dataclasses import replace
 from types import SimpleNamespace
 import pytest
-from app.monitor_config import save_config, validate
-from app.products.custom_rules import voucher_price, assess_custom
+from app.monitor_config import save_config
+from app.products.custom_rules import assess_custom
 from app.database.repository import ListingRepository
 from app.notifications.telegram import format_listings
 from app.fast_monitor import FastMonitor, Scheduler
@@ -11,113 +11,99 @@ from test_repository import make_listing
 
 def configure(**product):
     return save_config({'groups': [{'url': 'https://www.facebook.com/groups/123/'}],
-        'products': [{'keyword': '禮券', 'max_price': 1000, 'type': 'voucher', 'source': 'group', 'max_discount': 100, **product}],
+        'products': [{'keyword': 'iPhone 17 Pro Max', 'max_price': 35000, 'type': 'phone', 'source': 'group', **product}],
         'marketplace_enabled': False})
-
-
-@pytest.mark.parametrize('text,expected',[
-    ('出售全家禮券 面額1000 售950元',950),('禮券 面額1000 95折',950),
-    ('禮券 面額1000 9.5折',950),('禮券 面額1000',None),
-    ('禮券 面額1000 售95折',950),('禮券 面額1000 售 95 折',950),
-    ('禮券 面額1000 售950；面額500 售480',None),('禮券 面額1000 3張 售950',None),
-    ('禮券 面額1000 1張 售950',950),('禮券 面額1000 95折 9折',None)])
-def test_voucher_price(text, expected):
-    assert voucher_price(text)==expected
 
 
 def test_pending_and_source_rules():
     configure(notify_uncertain=True)
-    assert assess_custom('售禮券 面額1000',1000,source='group').status=='pending'
-    assert assess_custom('售禮券 面額1000',1000,source='marketplace').status=='rejected'
-    assert assess_custom('求購禮券 售950',950,source='group').status=='rejected'
-    assert assess_custom('禮券已售出 售950',950,source='group').status=='rejected'
-    assert assess_custom('售禮券 面額1000 售1100',1100,source='group').status=='rejected'
+    assert assess_custom('售 iPhone 17 Pro Max 256GB', None, source='group').status == 'pending'
+    assert assess_custom('售 iPhone 17 Pro Max 256GB 售32000', 32000, source='marketplace').status == 'rejected'
+    assert assess_custom('求購 iPhone 17 Pro Max 256GB 售32000', 32000, source='group').status == 'rejected'
+    assert assess_custom('iPhone 17 Pro Max 256GB 已售出 售32000', 32000, source='group').status == 'rejected'
+    assert assess_custom('售 iPhone 17 Pro Max 256GB 售38000', 38000, source='group').status == 'rejected'
     configure(notify_uncertain=False)
-    assert assess_custom('售禮券 面額1000',1000,source='group').status=='rejected'
+    assert assess_custom('售 iPhone 17 Pro Max 256GB', None, source='group').status == 'rejected'
 
 
 def test_pending_persisted_and_notification_keeps_original(tmp_path):
     configure(notify_uncertain=True)
-    listing=replace(make_listing(),source='group',title='全家禮券',description='出售禮券 面額1000',price=1000,location=None)
-    with ListingRepository(tmp_path/'db') as repo:
+    listing = replace(make_listing(), source='group', title='售 iPhone 17 Pro Max 256GB', description='售 iPhone 17 Pro Max 256GB 盒裝完整', price=None, location='新竹市')
+    with ListingRepository(tmp_path / 'db') as repo:
         assert repo.save(listing).is_eligible
-        row=repo.get('group',listing.source_id)
-        assert row['price'] is None and row['match_status']=='pending'
-        message=format_listings(repo.list_recent(only_unnotified=True,only_eligible=True))
-        assert '待確認' in message and '出售禮券 面額1000' in message
+        row = repo.get('group', listing.source_id)
+        assert row['price'] is None and row['match_status'] == 'pending'
+        message = format_listings(repo.list_recent(only_unnotified=True, only_eligible=True))
+        assert '待確認' in message and '售 iPhone 17 Pro Max 256GB 盒裝完整' in message
+        assert '商品：售 iPhone 17 Pro Max 256GB' not in message
         repo.mark_notified(row['id'])
-        assert not repo.list_recent(only_unnotified=True,only_eligible=True)
-        repo.save(replace(listing,description='出售禮券 面額1000 售950'))
-        assert repo.list_recent(only_unnotified=True,only_eligible=True)[0]['price']==950
+        assert not repo.list_recent(only_unnotified=True, only_eligible=True)
+        repo.save(replace(listing, description='售 iPhone 17 Pro Max 256GB 售32000', price=32000))
+        assert repo.list_recent(only_unnotified=True, only_eligible=True)[0]['price'] == 32000
 
 
 def test_disabled_marketplace_never_opens_page():
     configure()
-    monitor=object.__new__(FastMonitor)
-    monitor.search_page=SimpleNamespace(goto=lambda *args,**kwargs:pytest.fail('must not navigate'))
+    monitor = object.__new__(FastMonitor)
+    monitor.search_page = SimpleNamespace(goto=lambda *args, **kwargs: pytest.fail('must not navigate'))
     monitor.marketplace()
     monitor.details()
 
 
 def test_disabled_marketplace_does_not_block_groups():
     configure()
-    monitor=object.__new__(FastMonitor)
-    monitor.detail_queue=[]
-    now=[0];calls=[]
-    monitor.marketplace=lambda **kwargs:pytest.fail('disabled search executed')
-    monitor.details=lambda:pytest.fail('disabled details executed')
-    monitor.group=lambda url:(calls.append(url),now.__setitem__(0,now[0]+1))
-    monitor.notifications=lambda:now.__setitem__(0,now[0]+1)
-    monitor.run(Scheduler(('old',)),clock=lambda:now[0],sleep=lambda value:now.__setitem__(0,now[0]+value),duration=3)
-    assert calls==['https://www.facebook.com/groups/123/']
+    monitor = object.__new__(FastMonitor)
+    monitor.detail_queue = []
+    now = [0]
+    calls = []
+    monitor.marketplace = lambda **kwargs: pytest.fail('disabled search executed')
+    monitor.details = lambda: pytest.fail('disabled details executed')
+    monitor.group = lambda url: (calls.append(url), now.__setitem__(0, now[0] + 1))
+    monitor.notifications = lambda: now.__setitem__(0, now[0] + 1)
+    monitor.run(Scheduler(('old',)), clock=lambda: now[0], sleep=lambda value: now.__setitem__(0, now[0] + value), duration=3)
+    assert calls == ['https://www.facebook.com/groups/123/']
 
 
 def test_disabled_marketplace_notifications_leave_groups_available(tmp_path, monkeypatch):
     from test_fast_monitor import bare_monitor
-    configure(source='both',type='general')
-    sent=[]
-    monkeypatch.setattr('app.fast_monitor.send_html',lambda *args,**kwargs:sent.append(args[2]))
-    with ListingRepository(tmp_path/'db') as repo:
-        listing=replace(make_listing(),title='禮券',description='售禮券 售950',price=950,location=None)
-        repo.save(replace(listing,source='marketplace',source_id='market'))
-        repo.save(replace(listing,source='group',source_id='group'))
-        monitor=bare_monitor(repo)
+    configure(source='both', type='general')
+    sent = []
+    monkeypatch.setattr('app.fast_monitor.send_html', lambda *args, **kwargs: sent.append(args[2]))
+    with ListingRepository(tmp_path / 'db') as repo:
+        listing = replace(make_listing(), title='iPhone 17 Pro Max', description='售 iPhone 17 Pro Max 售32000', price=32000, location=None)
+        repo.save(replace(listing, source='marketplace', source_id='market'))
+        repo.save(replace(listing, source='group', source_id='group'))
+        monitor = bare_monitor(repo)
         monitor.notifications(limit=1)
-        assert len(sent)==1
-        assert repo.get('group','group')['notified_at'] is not None
-        assert repo.get('marketplace','market')['notified_at'] is None
+        assert len(sent) == 1
+        assert repo.get('group', 'group')['notified_at'] is not None
+        assert repo.get('marketplace', 'market')['notified_at'] is None
 
 
-def test_voucher_defaults_to_uncertain_notifications():
-    value=configure()
-    assert value['products'][0]['notify_uncertain'] is True
-    assert assess_custom('售禮券 面額1000',1000,source='group').status=='pending'
+def test_phone_rule_uses_exact_model_capacity_price_and_region():
+    save_config({'groups': [{'url': 'https://www.facebook.com/groups/123/'}], 'products': [{
+        'keyword': 'iPhone 18 Pro', 'max_price': 45_000, 'type': 'phone',
+        'capacity_gb': 256, 'regions': '新竹, 桃園', 'source': 'both',
+    }]})
+    assert assess_custom('售 iPhone 18 Pro 256GB 售價45000', 45_000, '新竹市').status == 'matched'
+    assert assess_custom('售 iPhone 18 Pro 256GB 售價45000', 45_000, '桃園市').status == 'matched'
+    assert assess_custom('售 iPhone 18 Pro Max 256GB 售價40400', 40_400, '新竹市').status == 'rejected'
+    assert assess_custom('售 iPhone 18 Pro 512GB 售價45000', 45_000, '新竹市').status == 'rejected'
+    assert assess_custom('售 iPhone 18 Pro 256GB 售價45001', 45_001, '新竹市').status == 'rejected'
+    assert assess_custom('售 iPhone 18 Pro 256GB 售價45000', 45_000, '台中市').status == 'rejected'
+    assert assess_custom('售 iPhone 18 Pro 256GB 附手機殼 售價45000', 45_000, '新竹市').status == 'matched'
+    assert assess_custom('售 iPhone 18 Pro 256GB 手機殼 售價500', 500, '新竹市').status == 'rejected'
 
 
-@pytest.mark.parametrize('text,status', [
-    ('售禮券 92折', 'matched'), ('售禮券 9.2折', 'matched'),
-    ('售禮券 9折', 'matched'), ('售禮券 面額1000 售920', 'matched'),
-    ('售禮券 總面額50000 總售價46000', 'matched'),
-    ('售禮券 總面額50000 售46000', 'matched'),
-    ('售禮券 面額1000 售921', 'rejected'), ('售禮券 93折', 'rejected'),
-    ('售禮券 面額1000000 92折', 'matched'),
-    ('售禮券 面額1000', 'pending'), ('售禮券 售920', 'pending'),
-    ('售禮券 面額1000 售900 面額500 售480', 'pending'),
-])
-def test_voucher_92_percent_regardless_amount_and_location(text, status):
-    configure(max_discount=92,max_price=1,notify_uncertain=True)
-    assert assess_custom(text,1000000,location='高雄市',source='group').status==status
-
-
-def test_new_discount_limit_rechecked_before_sending_old_eligible_row(tmp_path, monkeypatch):
+def test_new_price_limit_rechecked_before_sending_old_eligible_row(tmp_path, monkeypatch):
     from test_fast_monitor import bare_monitor
-    configure(max_discount=100)
-    sent=[]
-    monkeypatch.setattr('app.fast_monitor.send_html',lambda *args,**kwargs:sent.append(args))
-    with ListingRepository(tmp_path/'db') as repo:
-        listing=replace(make_listing(),source='group',title='禮券',description='售禮券 面額1000 售950',price=950)
+    configure(max_price=36000)
+    sent = []
+    monkeypatch.setattr('app.fast_monitor.send_html', lambda *args, **kwargs: sent.append(args))
+    with ListingRepository(tmp_path / 'db') as repo:
+        listing = replace(make_listing(), source='group', title='iPhone 17 Pro Max', description='售 iPhone 17 Pro Max 256GB 售35000', price=35000)
         assert repo.save(listing).is_eligible
-        configure(max_discount=92,notify_uncertain=True)
+        configure(max_price=32000)
         bare_monitor(repo).notifications()
         assert not sent
-        assert not repo.get('group',listing.source_id)['eligible']
+        assert not repo.get('group', listing.source_id)['eligible']

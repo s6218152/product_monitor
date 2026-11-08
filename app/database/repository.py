@@ -61,9 +61,9 @@ class ListingRepository:
                     (*sources, *ids),
                 ))
             for listing in listings:
-                text = f"{listing.title} {listing.description or ''}"
-                from app.products.custom_rules import assess_custom
+                from app.products.custom_rules import assess_custom, listing_text
                 from dataclasses import replace
+                text = listing_text(listing.title, listing.description)
                 assessment = assess_custom(text, listing.price, listing.location, listing.source)
                 if assessment is not None:
                     listing = replace(listing, price=assessment.price)
@@ -102,11 +102,11 @@ class ListingRepository:
 
     def refresh_assessment(self, listing_id):
         """Apply current custom rules before delivery without changing observation times."""
-        from app.products.custom_rules import assess_custom
+        from app.products.custom_rules import assess_custom, listing_text
         row = self._connection.execute('SELECT * FROM listings WHERE id=?', (listing_id,)).fetchone()
         if row is None:
             return None
-        result = assess_custom(f"{row['title']} {row['description'] or ''}", row['price'], row['location'], row['source'])
+        result = assess_custom(listing_text(row['title'], row['description']), row['price'], row['location'], row['source'])
         if result is not None:
             with self._connection:
                 self._connection.execute('UPDATE listings SET price=?, eligible=?, match_status=?, match_note=? WHERE id=?',
