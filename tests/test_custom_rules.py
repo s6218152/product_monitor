@@ -1,4 +1,5 @@
 from dataclasses import replace
+from datetime import datetime, timezone
 from types import SimpleNamespace
 import pytest
 from app.monitor_config import save_config
@@ -70,7 +71,7 @@ def test_disabled_marketplace_notifications_leave_groups_available(tmp_path, mon
     sent = []
     monkeypatch.setattr('app.fast_monitor.send_html', lambda *args, **kwargs: sent.append(args[2]))
     with ListingRepository(tmp_path / 'db') as repo:
-        listing = replace(make_listing(), title='iPhone 17 Pro Max', description='售 iPhone 17 Pro Max 售32000', price=32000, location=None)
+        listing = replace(make_listing(), title='iPhone 17 Pro Max', description='售 iPhone 17 Pro Max 售32000', price=32000, location=None, created_at=datetime.now(timezone.utc))
         repo.save(replace(listing, source='marketplace', source_id='market'))
         repo.save(replace(listing, source='group', source_id='group'))
         monitor = bare_monitor(repo)

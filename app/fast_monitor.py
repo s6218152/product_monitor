@@ -395,6 +395,21 @@ class FastMonitor:
             row = self.repository.refresh_assessment(row['id'])
             if row is None or not row['eligible']:
                 continue
+            now = datetime.now(timezone.utc)
+            posted = datetime.fromisoformat(row['last_seen_at']) if row['last_seen_at'] else None
+            # Check if this is a price drop notification for an already-notified item
+            is_price_drop = (
+                row['notified_at'] is not None
+                and row['notified_price'] is not None
+                and row['price'] is not None
+                and row['price'] < row['notified_price']
+            )
+            # For first-time notifications (not a price drop), skip stale listings posted > 24 hours ago (86400s)
+            if not is_price_drop and posted and (now - posted).total_seconds() > 86400:
+                LOGGER.info('skip_stale_notification id=%s age_seconds=%.1f title=%s',
+                            row['id'], (now - posted).total_seconds(), row['title'])
+                self.repository.mark_notified(row['id'], sent_price=row['price'])
+                continue
             try:
                 send_html(self.settings.telegram_bot_token or '', self.settings.telegram_chat_id or '', format_listings([row]), timeout=10)
                 if getattr(self, 'rate_limited', False):

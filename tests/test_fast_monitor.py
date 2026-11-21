@@ -44,7 +44,7 @@ def test_incremental_save_sends_before_rest_of_scan(tmp_path, monkeypatch):
     monkeypatch.setattr('app.fast_monitor.send_html', lambda *a, **k: sent.append(a[2]) or 1)
     with ListingRepository(tmp_path/'db') as repo:
         monitor = bare_monitor(repo)
-        listing = replace(make_listing(32000), title='iPhone 17 Pro Max 256G', location='新竹縣')
+        listing = replace(make_listing(32000), title='iPhone 17 Pro Max 256G', location='新竹縣', created_at=datetime.now(timezone.utc))
         monitor.save(listing)
         assert len(sent) == 1
         assert repo.get(listing.source, listing.source_id)['notified_at']
@@ -73,7 +73,7 @@ def test_telegram_rate_limit_alert_and_recovery(tmp_path, monkeypatch):
     with ListingRepository(tmp_path/'db') as repo:
         monitor = bare_monitor(repo)
         monitor.alert_times = {}
-        listing = replace(make_listing(32000), title='iPhone 17 Pro Max 256G', location='新竹縣')
+        listing = replace(make_listing(32000), title='iPhone 17 Pro Max 256G', location='新竹縣', created_at=datetime.now(timezone.utc))
         repo.save(listing)
 
         # Trigger rate limit
@@ -110,7 +110,7 @@ def test_failed_send_is_retained_for_retry(tmp_path, monkeypatch):
     monkeypatch.setattr('app.fast_monitor.send_html', fail)
     with ListingRepository(tmp_path/'db') as repo:
         monitor = bare_monitor(repo)
-        listing = replace(make_listing(32000), title='iPhone 17 Pro Max 256G', location='新竹縣')
+        listing = replace(make_listing(32000), title='iPhone 17 Pro Max 256G', location='新竹縣', created_at=datetime.now(timezone.utc))
         import pytest
         with pytest.raises(RuntimeError):
             monitor.save(listing)
@@ -363,9 +363,11 @@ def test_notifications_are_not_starved_by_startup_groups():
     assert scheduler.next(17).name == 'marketplace'
 
 
-def test_login_loss_pauses_all_sources_and_alerts_once_even_on_retry(tmp_path):
+def test_login_loss_pauses_all_sources_and_alerts_once_even_on_retry(tmp_path, monkeypatch):
     from app.fast_monitor import FacebookLoginRequired
     from app.monitor_status import MonitorStatus
+    monkeypatch.setattr('app.fast_monitor.is_night_time', lambda: False)
+    monkeypatch.setattr('random.uniform', lambda a, b: 1.0)
     monitor=bare_monitor(None)
     now=[0];alerts=[];attempts=[]
     monitor.status_reporter=MonitorStatus(SimpleNamespace(facebook_group_urls=('a','b')),Scheduler(('a','b')))
@@ -390,3 +392,63 @@ def test_missing_login_cookie_detected_even_on_public_group_page():
     import pytest
     page=SimpleNamespace(url='https://www.facebook.com/groups/public/',context=SimpleNamespace(cookies=lambda url:[]))
     with pytest.raises(FacebookLoginRequired):FastMonitor.check_login(page)
+
+
+def test_stale_listings_skipped_for_telegram_notification(tmp_path, monkeypatch):
+    from datetime import timedelta
+    sent = []
+    monkeypatch.setattr('app.fast_monitor.send_html', lambda *a, **k: sent.append(a[2]) or 1)
+    with ListingRepository(tmp_path/'db') as repo:
+        monitor = bare_monitor(repo)
+        # Listing posted 2 days ago (stale)
+        stale_time = datetime.now(timezone.utc) - timedelta(days=2)
+        stale_listing = replace(
+            make_listing(32000),
+            source_id='stale-1',
+            title='iPhone 17 Pro Max 256G Stale',
+            location='新竹縣',
+            created_at=stale_time,
+        )
+        repo.save(stale_listing)
+        
+        # Verify it is initially eligible and unnotified in repo
+        rows = repo.list_recent(limit=10, only_unnotified=True, only_eligible=True)
+        assert len(rows) == 1
+        assert rows[0]['title'] == 'iPhone 17 Pro Max 256G Stale'
+
+        # Run notifications
+        monitor.notifications(limit=1)
+
+        # Telegram notification must NOT be sent for stale listing
+        assert len(sent) == 0
+
+        # But it should be marked as notified so it does not block the queue
+        assert repo.get(stale_listing.source, stale_listing.source_id)['notified_at'] is not None
+
+        # Fresh listing posted 10 minutes ago
+        fresh_time = datetime.now(timezone.utc) - timedelta(minutes=10)
+        fresh_listing = replace(
+            make_listing(32000),
+            source_id='fresh-1',
+            title='iPhone 17 Pro Max 256G Fresh',
+            location='新竹縣',
+            created_at=fresh_time,
+        )
+        repo.save(fresh_listing)
+
+        monitor.notifications(limit=1)
+        assert len(sent) == 1
+        assert repo.get(fresh_listing.source, fresh_listing.source_id)['notified_at'] is not None
+
+        # Price drop on stale listing (e.g. was 32000, now dropped to 29000)
+        # Even though original post was 2 days ago, the price drop MUST be notified!
+        dropped_listing = replace(
+            stale_listing,
+            price=29000,
+        )
+        repo.save(dropped_listing)
+        monitor.notifications(limit=1)
+        assert len(sent) == 2
+        assert "📉 降價通知" in sent[-1]
+        assert repo.get(stale_listing.source, stale_listing.source_id)['notified_price'] == 29000
+
